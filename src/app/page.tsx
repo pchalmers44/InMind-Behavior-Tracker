@@ -769,6 +769,7 @@ export default function Page() {
   const [newVisitForm, setNewVisitForm] = useState({ type: "student", subjectName: "", observerName: "", grade: "", totalStudents: "", schoolName: "" });
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [tab, setTab] = useState("home");
+  const [implementationStatus, setImplementationStatus] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -807,6 +808,7 @@ export default function Page() {
 
   const startVisit = () => {
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
+    if (!implementationStatus) return;
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
@@ -827,6 +829,7 @@ export default function Page() {
       totalStudents: newVisitForm.type === "classroom" ? (parseInt(newVisitForm.totalStudents) || null) : null,
       startTime: Date.now(),
       behaviors: prevBehaviors,
+      implementationStatus,
       prevVisit: prevVisits[0] || null
     };
     setActiveVisit(visit);
@@ -847,6 +850,7 @@ export default function Page() {
         school_name: completedVisit.schoolName ?? "",
         grade: completedVisit.grade ?? "",
         total_students: completedVisit.totalStudents ?? 0,
+        implementation_status: completedVisit.implementationStatus ?? implementationStatus,
         start_time: completedVisit.startTime ? new Date(completedVisit.startTime).getTime() : null,
         end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
         total_duration: completedVisit.totalDuration ?? null,
@@ -872,6 +876,7 @@ export default function Page() {
     setScreen("home");
     setTab("home");
     setNewVisitForm({ type: "student", subjectName: "", observerName: "", grade: "", totalStudents: "", schoolName: "" });
+    setImplementationStatus("");
   };
 
   const allVisits = (data?.visits || []).sort((a, b) => b.startTime - a.startTime);
@@ -934,7 +939,7 @@ export default function Page() {
         {screen === "new-visit" && (
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
-              <button onClick={() => { setScreen("home"); setTab("home"); }} style={{
+              <button onClick={() => { setImplementationStatus(""); setScreen("home"); setTab("home"); }} style={{
                 background: "none", border: "1px solid #334155", color: "#94a3b8",
                 borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer"
               }}>← Back</button>
@@ -1001,6 +1006,26 @@ export default function Page() {
               </div>
             )}
 
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+                Did the teacher implement previous feedback/interventions?
+              </div>
+              <select
+                value={implementationStatus}
+                onChange={e => setImplementationStatus(e.target.value)}
+                style={{
+                  width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                  color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                  fontFamily: "inherit"
+                }}
+              >
+                <option value="">Select…</option>
+                <option value="fully">Yes</option>
+                <option value="not">No</option>
+                <option value="partially">Partially</option>
+              </select>
+            </div>
+
             {/* Prior visits hint */}
             {newVisitForm.subjectName.trim() && (() => {
               const prior = allVisits.filter(v =>
@@ -1023,13 +1048,13 @@ export default function Page() {
             })()}
 
             <button onClick={startVisit}
-              disabled={!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()}
+              disabled={!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus}
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim())
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus)
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) ? "not-allowed" : "pointer"
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus) ? "not-allowed" : "pointer"
               }}>▶ Start Observation</button>
           </div>
         )}
@@ -1056,7 +1081,7 @@ export default function Page() {
             {/* Home */}
             {tab === "home" && (
               <div>
-                <button onClick={() => { setScreen("new-visit"); setTab(""); }} style={{
+                <button onClick={() => { setImplementationStatus(""); setScreen("new-visit"); setTab(""); }} style={{
                   width: "100%", background: "linear-gradient(135deg, #38bdf8, #818cf8)",
                   color: "#0f172a", border: "none", borderRadius: 14, padding: "20px",
                   fontSize: 18, fontWeight: 900, cursor: "pointer", marginBottom: 24,
