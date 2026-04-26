@@ -1,7 +1,54 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
+
+type Behavior = {
+  id: string;
+  label: string;
+  type: string;
+  category?: string;
+  measureType?: string;
+  count?: number;
+  intensity?: number | null;
+  durationSec?: number;
+  custom?: boolean;
+  [key: string]: any;
+};
+
+type Visit = {
+  id: string;
+  type: string;
+  subjectName: string;
+  observerName: string;
+  grade?: string;
+  schoolName?: string;
+  totalStudents?: number | null;
+  startTime: number;
+  endTime?: number | null;
+  totalDuration?: number | null;
+  behaviors?: Behavior[];
+  notes?: string;
+  recommendations?: string;
+  implementationStatus?: string;
+  implementationNotes?: string;
+  prevVisit?: Visit | null;
+  [key: string]: any;
+};
+
+type DataState = {
+  visits: Visit[];
+  subjects: string[];
+};
+
+type NewVisitFormState = {
+  type: "student" | "classroom";
+  subjectName: string;
+  observerName: string;
+  grade: string;
+  totalStudents: string;
+  schoolName: string;
+};
 
 // ─── Behavior Library ────────────────────────────────────────────────────────
 const BEHAVIOR_LIBRARY = {
@@ -66,30 +113,30 @@ const INTENSITY_LEVELS = [
 
 // ─── Storage helpers ─────────────────────────────────────────────────────────
 // ─── Utilities ───────────────────────────────────────────────────────────────
-function fmtTime(sec) {
+function fmtTime(sec: number) {
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
-function fmtDuration(sec) {
+function fmtDuration(sec: number) {
   if (sec < 60) return `${sec}s`;
   const m = Math.floor(sec / 60), s = sec % 60;
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
-function calcRate(freq, durationSec) {
+function calcRate(freq: number, durationSec: number) {
   if (!durationSec) return "—";
   const perMin = (freq / (durationSec / 60)).toFixed(2);
   return `${perMin}/min`;
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
-function dateStr(ts) {
-  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+function dateStr(ts: number | string | Date | null | undefined) {
+  return new Date(ts as any).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
-function timeStr(ts) {
-  return new Date(ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function timeStr(ts: number | string | Date | null | undefined) {
+  return new Date(ts as any).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
-function Badge({ color, children }) {
+function Badge({ color, children }: { color: string; children: ReactNode }) {
   return (
     <span style={{
       background: color + "22", color, border: `1px solid ${color}55`,
@@ -99,7 +146,7 @@ function Badge({ color, children }) {
   );
 }
 
-function IntensityPicker({ value, onChange }) {
+function IntensityPicker({ value, onChange }: { value: number | null | undefined; onChange: (val: number) => void }) {
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       {INTENSITY_LEVELS.map(l => (
@@ -116,26 +163,34 @@ function IntensityPicker({ value, onChange }) {
 }
 
 // ─── Active Visit Screen ──────────────────────────────────────────────────────
-function ActiveVisit({ visit, onComplete, prevVisit }) {
+function ActiveVisit({
+  visit,
+  onComplete,
+  prevVisit,
+}: {
+  visit: Visit;
+  onComplete: (completed: Visit) => void;
+  prevVisit?: Visit | null;
+}) {
   const totalStudents = visit.totalStudents || null;
   const [elapsed, setElapsed] = useState(0);
-  const [behaviors, setBehaviors] = useState(visit.behaviors || []);
-  const [durationTimers, setDurationTimers] = useState({});
+  const [behaviors, setBehaviors] = useState<Behavior[]>(visit.behaviors || []);
+  const [durationTimers, setDurationTimers] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState(visit.notes || "");
   const [recommendations, setRecommendations] = useState(visit.recommendations || "");
   const [implStatus, setImplStatus] = useState(visit.implementationStatus || "");
   const [implNotes, setImplNotes] = useState(visit.implementationNotes || "");
   const [showAddBehavior, setShowAddBehavior] = useState(false);
-  const [customBehavior, setCustomBehavior] = useState({ label: "", type: "frequency" });
-  const startRef = useRef(visit.startTime);
-  const timerRef = useRef(null);
-  const activeTimers = useRef({});
+  const [customBehavior, setCustomBehavior] = useState<{ label: string; type: string }>({ label: "", type: "frequency" });
+  const startRef = useRef<number>(visit.startTime);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeTimers = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
     }, 1000);
-    return () => clearInterval(timerRef.current);
+    return () => clearInterval(timerRef.current as any);
   }, []);
 
   // Duration timer tick
@@ -143,7 +198,7 @@ function ActiveVisit({ visit, onComplete, prevVisit }) {
     const id = setInterval(() => {
       setDurationTimers(prev => {
         const next = { ...prev };
-        Object.keys(activeTimers.current).forEach(bid => {
+        Object.keys(activeTimers.current).forEach((bid) => {
           if (activeTimers.current[bid]) {
             next[bid] = (next[bid] || 0) + 1;
           }
@@ -154,24 +209,24 @@ function ActiveVisit({ visit, onComplete, prevVisit }) {
     return () => clearInterval(id);
   }, []);
 
-  const toggleDuration = (bid) => {
+  const toggleDuration = (bid: string) => {
     activeTimers.current[bid] = !activeTimers.current[bid];
     setDurationTimers(prev => ({ ...prev })); // force re-render
   };
 
-  const recordFrequency = (bid) => {
+  const recordFrequency = (bid: string) => {
     setBehaviors(prev => prev.map(b =>
       b.id === bid ? { ...b, count: (b.count || 0) + 1 } : b
     ));
   };
 
-  const setIntensity = (bid, val) => {
+  const setIntensity = (bid: string, val: number) => {
     setBehaviors(prev => prev.map(b =>
       b.id === bid ? { ...b, intensity: val } : b
     ));
   };
 
-  const addBehaviorFromLibrary = (bDef) => {
+  const addBehaviorFromLibrary = (bDef: Behavior) => {
     if (!behaviors.find(b => b.id === bDef.id)) {
       setBehaviors(prev => [...prev, { ...bDef, count: 0, intensity: null }]);
     }
@@ -186,7 +241,7 @@ function ActiveVisit({ visit, onComplete, prevVisit }) {
     setShowAddBehavior(false);
   };
 
-  const removeBehavior = (bid) => {
+  const removeBehavior = (bid: string) => {
     setBehaviors(prev => prev.filter(b => b.id !== bid));
     delete activeTimers.current[bid];
   };
@@ -208,7 +263,7 @@ function ActiveVisit({ visit, onComplete, prevVisit }) {
     });
   };
 
-  const libBehaviors = BEHAVIOR_LIBRARY[visit.type] || [];
+  const libBehaviors = (BEHAVIOR_LIBRARY as Record<string, Behavior[]>)[visit.type] || [];
   const availableLib = libBehaviors.filter(b => !behaviors.find(bb => bb.id === b.id));
 
   return (
@@ -501,7 +556,7 @@ function ActiveVisit({ visit, onComplete, prevVisit }) {
 }
 
 // ─── Visit Summary Card ───────────────────────────────────────────────────────
-function VisitCard({ visit, onClick }) {
+function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
   const implColor = visit.implementationStatus === "fully" ? "#4ade80"
     : visit.implementationStatus === "partially" ? "#facc15"
     : visit.implementationStatus === "not" ? "#f87171" : null;
@@ -537,7 +592,7 @@ function VisitCard({ visit, onClick }) {
           }}>{b.label}: {b.type === "frequency" ? `${b.count || 0}×` : fmtDuration(b.durationSec || 0)}</span>
         ))}
         {(visit.behaviors || []).length > 4 && (
-          <span style={{ color: "#475569", fontSize: 11, padding: "3px 8px" }}>+{visit.behaviors.length - 4} more</span>
+          <span style={{ color: "#475569", fontSize: 11, padding: "3px 8px" }}>+{(visit.behaviors || []).length - 4} more</span>
         )}
       </div>
     </div>
@@ -545,7 +600,7 @@ function VisitCard({ visit, onClick }) {
 }
 
 // ─── Visit Detail Modal ───────────────────────────────────────────────────────
-function VisitDetail({ visit, onClose }) {
+function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "#000000cc", zIndex: 100,
@@ -601,7 +656,7 @@ function VisitDetail({ visit, onClose }) {
                     {b.type === "frequency"
                       ? (b.measureType === "student-count" && visit.totalStudents
                           ? `${Math.round(((b.count || 0) / visit.totalStudents) * 100)}% of ${visit.totalStudents} students`
-                          : calcRate(b.count || 0, visit.totalDuration))
+                          : calcRate(b.count || 0, visit.totalDuration || 0))
                       : `${Math.round(((b.durationSec || 0) / (visit.totalDuration || 1)) * 100)}% of visit`}
                   </div>
                   {intLevel && <div style={{ fontSize: 11, color: intLevel.color, marginTop: 2 }}>{intLevel.label}</div>}
@@ -629,7 +684,7 @@ function VisitDetail({ visit, onClose }) {
 }
 
 // ─── Reports View ─────────────────────────────────────────────────────────────
-function Reports({ visits }) {
+function Reports({ visits }: { visits: Visit[] }) {
   const [filter, setFilter] = useState("all");
   const [selectedSubject, setSelectedSubject] = useState("all");
 
@@ -640,7 +695,7 @@ function Reports({ visits }) {
   ).sort((a, b) => b.startTime - a.startTime);
 
   // Aggregate behavior trends
-  const behaviorTrends = {};
+  const behaviorTrends: Record<string, { total: number; visits: number; type: string }> = {};
   filtered.forEach(v => {
     (v.behaviors || []).forEach(b => {
       if (!behaviorTrends[b.label]) behaviorTrends[b.label] = { total: 0, visits: 0, type: b.type };
@@ -651,7 +706,7 @@ function Reports({ visits }) {
   });
 
   // Implementation stats
-  const implStats = { fully: 0, partially: 0, not: 0, none: 0 };
+  const implStats: Record<string, number> = { fully: 0, partially: 0, not: 0, none: 0 };
   filtered.forEach(v => {
     if (v.implementationStatus) implStats[v.implementationStatus]++;
     else implStats.none++;
@@ -763,12 +818,12 @@ function Reports({ visits }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function Page() {
-  const [data, setData] = useState(null);
-  const [screen, setScreen] = useState("home"); // home | new-visit | active | history | reports
-  const [activeVisit, setActiveVisit] = useState(null);
-  const [newVisitForm, setNewVisitForm] = useState({ type: "student", subjectName: "", observerName: "", grade: "", totalStudents: "", schoolName: "" });
-  const [selectedVisit, setSelectedVisit] = useState(null);
-  const [tab, setTab] = useState("home");
+  const [data, setData] = useState<DataState | null>(null);
+  const [screen, setScreen] = useState<"home" | "new-visit" | "active" | "history" | "reports">("home"); // home | new-visit | active | history | reports
+  const [activeVisit, setActiveVisit] = useState<Visit | null>(null);
+  const [newVisitForm, setNewVisitForm] = useState<NewVisitFormState>({ type: "student", subjectName: "", observerName: "", grade: "", totalStudents: "", schoolName: "" });
+  const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
+  const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
   const [implementationStatus, setImplementationStatus] = useState("");
 
   useEffect(() => {
@@ -784,7 +839,7 @@ export default function Page() {
         return;
       }
 
-      const mappedVisits = (visits || []).map((v) => {
+      const mappedVisits: Visit[] = (visits || []).map((v: any) => {
         const start = v.start_time ?? v.startTime;
         const end = v.end_time ?? v.endTime;
 
@@ -792,8 +847,8 @@ export default function Page() {
           ...v,
           subjectName: v.subject_name ?? v.subjectName,
           observerName: v.observer_name ?? v.observerName,
-          startTime: typeof start === "number" ? start : start ? new Date(start).getTime() : null,
-          endTime: typeof end === "number" ? end : end ? new Date(end).getTime() : null,
+          startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
+          endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
           totalDuration: v.total_duration ?? v.totalDuration,
         };
       });
@@ -802,7 +857,7 @@ export default function Page() {
     })();
   }, []);
 
-  const persistData = useCallback((d) => {
+  const persistData = useCallback((d: DataState) => {
     setData(d);
   }, []);
 
@@ -816,10 +871,10 @@ export default function Page() {
     ).sort((a, b) => b.startTime - a.startTime);
 
     const prevBehaviors = prevVisits.length > 0
-      ? prevVisits[0].behaviors.map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }))
+      ? (prevVisits[0].behaviors || []).map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }))
       : [];
 
-    const visit = {
+    const visit: Visit = {
       id: uid(),
       type: newVisitForm.type,
       subjectName: newVisitForm.subjectName.trim(),
@@ -831,13 +886,13 @@ export default function Page() {
       behaviors: prevBehaviors,
       implementationStatus,
       prevVisit: prevVisits[0] || null
-    };
+    } as any;
     setActiveVisit(visit);
     setScreen("active");
   };
 
-  const completeVisit = (completedVisit) => {
-    const updated = { ...data, visits: [...(data?.visits || []), completedVisit] };
+  const completeVisit = (completedVisit: Visit) => {
+    const updated: DataState = { ...(data as DataState), visits: [...(data?.visits || []), completedVisit] };
 
     setData(updated);
 
@@ -947,7 +1002,7 @@ export default function Page() {
             </div>
 
             <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {["student", "classroom"].map(t => (
+              {(["student", "classroom"] as const).map(t => (
                 <button key={t} onClick={() => setNewVisitForm(p => ({ ...p, type: t }))} style={{
                   flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700,
                   border: `2px solid ${newVisitForm.type === t ? "#38bdf8" : "#334155"}`,
@@ -965,7 +1020,7 @@ export default function Page() {
             ].map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>{f.label.toUpperCase()}</div>
-                <input value={newVisitForm[f.key]} onChange={e => setNewVisitForm(p => ({ ...p, [f.key]: e.target.value }))}
+                <input value={newVisitForm[f.key as keyof NewVisitFormState]} onChange={e => setNewVisitForm(p => ({ ...p, [f.key as keyof NewVisitFormState]: e.target.value }))}
                   placeholder={f.placeholder} style={{
                     width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
                     color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
@@ -1069,7 +1124,7 @@ export default function Page() {
                 { id: "history", label: `History (${allVisits.length})` },
                 { id: "reports", label: "Reports" },
               ].map(t => (
-                <button key={t.id} onClick={() => { setTab(t.id); setScreen(t.id === "home" ? "home" : t.id); }} style={{
+                <button key={t.id} onClick={() => { setTab(t.id as any); setScreen((t.id === "home" ? "home" : t.id) as any); }} style={{
                   flex: 1, padding: "8px", borderRadius: 9, fontSize: 13, fontWeight: 700,
                   border: "none",
                   background: tab === t.id ? "#0f172a" : "transparent",
