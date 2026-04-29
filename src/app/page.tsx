@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { GRADE_OPTIONS } from "@/lib/grades";
 
@@ -8,7 +8,7 @@ type Behavior = {
   id: string;
   label: string;
   type: string;
-  category?: string;
+  category?: BehaviorType;
   measureType?: string;
   count?: number;
   intensity?: number | null;
@@ -16,6 +16,8 @@ type Behavior = {
   custom?: boolean;
   [key: string]: any;
 };
+
+type BehaviorType = "positive" | "challenging";
 
 type Visit = {
   id: string;
@@ -197,6 +199,147 @@ function FirstVisitSelector({
   );
 }
 
+function SearchableSelect({
+  options,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: {
+  options: string[];
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const [highlightIndex, setHighlightIndex] = useState(0);
+
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+    return base.slice(0, 50);
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    setHighlightIndex(0);
+  }, [open, query]);
+
+  const commitSelection = (next: string) => {
+    onChange(next);
+    setQuery(next);
+    setOpen(false);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        value={query}
+        disabled={disabled}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          if (value) onChange("");
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setOpen(false);
+            return;
+          }
+          if (!open) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHighlightIndex(i => Math.min(filtered.length - 1, i + 1));
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHighlightIndex(i => Math.max(0, i - 1));
+            return;
+          }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const picked = filtered[highlightIndex];
+            if (picked) commitSelection(picked);
+            return;
+          }
+        }}
+        onBlur={() => {
+          window.setTimeout(() => {
+            setOpen(false);
+            const normalized = query.trim().toLowerCase();
+            const match = options.find(o => o.trim().toLowerCase() === normalized);
+            if (!match) {
+              onChange("");
+              setQuery("");
+            } else {
+              onChange(match);
+              setQuery(match);
+            }
+          }, 120);
+        }}
+        placeholder={placeholder}
+        style={{
+          width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+          color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+          fontFamily: "inherit"
+        }}
+      />
+      {open && (
+        <div style={{
+          position: "absolute",
+          top: "calc(100% + 6px)",
+          left: 0,
+          right: 0,
+          background: "#0f172a",
+          border: "1px solid #334155",
+          borderRadius: 12,
+          boxShadow: "0 10px 30px #00000055",
+          maxHeight: 260,
+          overflowY: "auto",
+          zIndex: 60,
+        }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: "10px 12px", fontSize: 13, color: "#64748b" }}>
+              No matches
+            </div>
+          ) : (
+            filtered.map((opt, idx) => (
+              <button
+                key={opt}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commitSelection(opt)}
+                onMouseEnter={() => setHighlightIndex(idx)}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  background: idx === highlightIndex ? "#1e293b" : "transparent",
+                  border: "none",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                }}
+              >
+                {opt}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ActiveVisit({
   visit,
   onComplete,
@@ -215,7 +358,11 @@ function ActiveVisit({
   const [implStatus, setImplStatus] = useState(visit.implementationStatus || "");
   const [implNotes, setImplNotes] = useState(visit.implementationNotes || "");
   const [showAddBehavior, setShowAddBehavior] = useState(false);
-  const [customBehavior, setCustomBehavior] = useState<{ label: string; type: string }>({ label: "", type: "frequency" });
+  const [customBehavior, setCustomBehavior] = useState<{ label: string; type: string; behaviorType?: BehaviorType }>({
+    label: "",
+    type: "frequency",
+    behaviorType: undefined,
+  });
   const startRef = useRef<number>(visit.startTime);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeTimers = useRef<Record<string, boolean>>({});
@@ -269,9 +416,18 @@ function ActiveVisit({
 
   const addCustomBehavior = () => {
     if (!customBehavior.label.trim()) return;
-    const nb = { id: uid(), label: customBehavior.label, type: customBehavior.type, count: 0, intensity: null, custom: true };
+    if (!customBehavior.behaviorType) return;
+    const nb = {
+      id: uid(),
+      label: customBehavior.label,
+      type: customBehavior.type,
+      category: customBehavior.behaviorType,
+      count: 0,
+      intensity: null,
+      custom: true
+    };
     setBehaviors(prev => [...prev, nb]);
-    setCustomBehavior({ label: "", type: "frequency" });
+    setCustomBehavior({ label: "", type: "frequency", behaviorType: undefined });
     setShowAddBehavior(false);
   };
 
@@ -543,6 +699,38 @@ function ActiveVisit({
             })}
             <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>CUSTOM BEHAVIOR</div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 10px", borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
+                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
+                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
+                }}>
+                  <input
+                    type="radio"
+                    name="customBehaviorType"
+                    checked={customBehavior.behaviorType === "positive"}
+                    onChange={() => setCustomBehavior(p => ({ ...p, behaviorType: "positive" }))}
+                  />
+                  Positive
+                </label>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 10px", borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
+                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
+                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
+                }}>
+                  <input
+                    type="radio"
+                    name="customBehaviorType"
+                    checked={customBehavior.behaviorType === "challenging"}
+                    onChange={() => setCustomBehavior(p => ({ ...p, behaviorType: "challenging" }))}
+                  />
+                  Challenging
+                </label>
+              </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <input value={customBehavior.label} onChange={e => setCustomBehavior(p => ({ ...p, label: e.target.value }))}
                   placeholder="Behavior name..." style={{
@@ -557,9 +745,11 @@ function ActiveVisit({
                   <option value="duration">Duration</option>
                 </select>
                 <button onClick={addCustomBehavior} style={{
-                  background: "#38bdf8", color: "#0f172a", border: "none", borderRadius: 8,
+                  background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
+                  color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
+                  border: "none", borderRadius: 8,
                   padding: "8px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer"
-                }}>Add</button>
+                }} disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}>Add</button>
               </div>
             </div>
           </div>
@@ -1008,6 +1198,18 @@ export default function Page() {
   };
 
   const allVisits = (data?.visits || []).sort((a, b) => b.startTime - a.startTime);
+  const subjectNameOptions = useMemo(() => {
+    const keyFor = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    const byKey = new Map<string, string>();
+    for (const v of allVisits) {
+      if (v.type !== newVisitForm.type) continue;
+      const raw = (v.subjectName || "").trim();
+      if (!raw) continue;
+      const k = keyFor(raw);
+      if (!byKey.has(k)) byKey.set(k, raw);
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
+  }, [allVisits, newVisitForm.type]);
 
   if (!data) {
     return (
@@ -1085,7 +1287,7 @@ export default function Page() {
                 <FirstVisitSelector
                   value={newVisitForm.isFirstVisit}
                   onChange={(val) => {
-                    setNewVisitForm(p => ({ ...p, isFirstVisit: val }));
+                    setNewVisitForm(p => ({ ...p, isFirstVisit: val, ...(val === false ? { subjectName: "" } : {}) }));
                     if (val) setImplementationStatus("");
                     setNewVisitStep("details");
                   }}
@@ -1119,14 +1321,18 @@ export default function Page() {
                 <FirstVisitSelector
                   value={newVisitForm.isFirstVisit}
                   onChange={(val) => {
-                    setNewVisitForm(p => ({ ...p, isFirstVisit: val }));
+                    setNewVisitForm(p => ({ ...p, isFirstVisit: val, ...(val === false ? { subjectName: "" } : {}) }));
                     if (val) setImplementationStatus("");
                   }}
                 />
 
                 <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
               {(["student", "classroom"] as const).map(t => (
-                <button key={t} onClick={() => setNewVisitForm(p => ({ ...p, type: t }))} style={{
+                <button key={t} onClick={() => setNewVisitForm(p => ({
+                  ...p,
+                  type: t,
+                  ...(p.isFirstVisit === false ? { subjectName: "" } : {})
+                }))} style={{
                   flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700,
                   border: `2px solid ${newVisitForm.type === t ? "#38bdf8" : "#334155"}`,
                   background: newVisitForm.type === t ? "#38bdf822" : "#1e293b",
@@ -1142,12 +1348,30 @@ export default function Page() {
             ] as const).map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>{f.label.toUpperCase()}</div>
-                <input value={newVisitForm[f.key]} onChange={e => setNewVisitForm(p => ({ ...p, [f.key]: e.target.value }))}
-                  placeholder={f.placeholder} style={{
-                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
-                    color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
-                    fontFamily: "inherit"
-                  }} />
+                {f.key === "subjectName" && newVisitForm.isFirstVisit === false && subjectNameOptions.length > 0 ? (
+                  <SearchableSelect
+                    options={subjectNameOptions}
+                    value={newVisitForm.subjectName}
+                    onChange={(next) => setNewVisitForm(p => ({ ...p, subjectName: next }))}
+                    placeholder="Search and select..."
+                  />
+                ) : (
+                  <input
+                    value={newVisitForm[f.key]}
+                    onChange={e => setNewVisitForm(p => ({ ...p, [f.key]: e.target.value }))}
+                    placeholder={f.placeholder}
+                    style={{
+                      width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                      color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                      fontFamily: "inherit"
+                    }}
+                  />
+                )}
+                {f.key === "subjectName" && newVisitForm.isFirstVisit === false && subjectNameOptions.length === 0 && (
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
+                    No previous names found yetâ€”free entry is enabled for now.
+                  </div>
+                )}
               </div>
             ))}
 
