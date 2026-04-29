@@ -50,7 +50,7 @@ type NewVisitFormState = {
   grade: string;
   totalStudents: string;
   schoolName: string;
-  isFirstVisit: boolean | null;
+  isFirstVisit?: boolean;
 };
 
 // ─── Behavior Library ────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ function FirstVisitSelector({
   value,
   onChange,
 }: {
-  value: boolean | null;
+  value?: boolean;
   onChange: (val: boolean) => void;
 }) {
   return (
@@ -870,7 +870,7 @@ export default function Page() {
     grade: "",
     totalStudents: "",
     schoolName: "",
-    isFirstVisit: null,
+    isFirstVisit: undefined,
   });
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
   const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
@@ -915,8 +915,8 @@ export default function Page() {
   const startVisit = () => {
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
     if (!newVisitForm.grade) return;
-    if (newVisitForm.isFirstVisit === null) return;
-    if (newVisitForm.isFirstVisit === true && !implementationStatus) return;
+    if (newVisitForm.isFirstVisit === undefined) return;
+    if (newVisitForm.isFirstVisit === false && !implementationStatus) return;
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
@@ -943,7 +943,7 @@ export default function Page() {
       startTime: Date.now(),
       behaviors: prevBehaviors,
       isFirstVisit: newVisitForm.isFirstVisit,
-      implementationStatus: newVisitForm.isFirstVisit ? implementationStatus : undefined,
+      implementationStatus: newVisitForm.isFirstVisit === false ? implementationStatus : undefined,
       prevVisit: prevVisits[0] || null
     } as any;
     setActiveVisit(visit);
@@ -973,7 +973,7 @@ export default function Page() {
       const visitObject = {
         ...visitObjectBase,
         ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
-        ...(completedVisit.isFirstVisit ? { implementation_status: completedVisit.implementationStatus ?? implementationStatus } : {}),
+        ...(completedVisit.isFirstVisit === false ? { implementation_status: completedVisit.implementationStatus ?? implementationStatus } : {}),
       };
 
       let insertResult = await supabase.from("visits").insert([visitObject]).select();
@@ -1001,7 +1001,7 @@ export default function Page() {
       grade: "",
       totalStudents: "",
       schoolName: "",
-      isFirstVisit: null,
+      isFirstVisit: undefined,
     });
     setImplementationStatus("");
     setNewVisitStep("firstVisit");
@@ -1070,7 +1070,7 @@ export default function Page() {
               <button onClick={() => {
                 setImplementationStatus("");
                 setNewVisitStep("firstVisit");
-                setNewVisitForm(p => ({ ...p, isFirstVisit: null }));
+                setNewVisitForm(p => ({ ...p, isFirstVisit: undefined }));
                 setScreen("home");
                 setTab("home");
               }} style={{
@@ -1086,26 +1086,31 @@ export default function Page() {
                   value={newVisitForm.isFirstVisit}
                   onChange={(val) => {
                     setNewVisitForm(p => ({ ...p, isFirstVisit: val }));
-                    if (!val) setImplementationStatus("");
+                    if (val) setImplementationStatus("");
+                    setNewVisitStep("details");
                   }}
                 />
-                <button
-                  onClick={() => setNewVisitStep("details")}
-                  disabled={newVisitForm.isFirstVisit === null}
-                  style={{
-                    width: "100%",
-                    background: newVisitForm.isFirstVisit === null ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                    color: newVisitForm.isFirstVisit === null ? "#475569" : "#0f172a",
-                    border: "none",
-                    borderRadius: 12,
-                    padding: "14px 16px",
-                    fontSize: 15,
-                    fontWeight: 900,
-                    cursor: newVisitForm.isFirstVisit === null ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Continue
-                </button>
+                {false && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+                      Did the teacher implement previous feedback/interventions?
+                    </div>
+                    <select
+                      value={implementationStatus}
+                      onChange={e => setImplementationStatus(e.target.value)}
+                      style={{
+                        width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                        color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                        fontFamily: "inherit"
+                      }}
+                    >
+                      <option value="">Select…</option>
+                      <option value="fully">Yes</option>
+                      <option value="not">No</option>
+                      <option value="partially">Partially</option>
+                    </select>
+                  </div>
+                )}
               </>
             )}
 
@@ -1115,7 +1120,7 @@ export default function Page() {
                   value={newVisitForm.isFirstVisit}
                   onChange={(val) => {
                     setNewVisitForm(p => ({ ...p, isFirstVisit: val }));
-                    if (!val) setImplementationStatus("");
+                    if (val) setImplementationStatus("");
                   }}
                 />
 
@@ -1199,7 +1204,7 @@ export default function Page() {
               </div>
             )}
 
-            {newVisitForm.isFirstVisit === true && (
+            {newVisitForm.isFirstVisit === false && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
                   Did the teacher implement previous feedback/interventions?
@@ -1247,15 +1252,15 @@ export default function Page() {
                 !newVisitForm.subjectName.trim() ||
                 !newVisitForm.observerName.trim() ||
                 !newVisitForm.grade ||
-                newVisitForm.isFirstVisit === null ||
-                (newVisitForm.isFirstVisit === true && !implementationStatus)
+                newVisitForm.isFirstVisit === undefined ||
+                (newVisitForm.isFirstVisit === false && !implementationStatus)
               }
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === null || (newVisitForm.isFirstVisit === true && !implementationStatus))
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === undefined || (newVisitForm.isFirstVisit === false && !implementationStatus))
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === null || (newVisitForm.isFirstVisit === true && !implementationStatus)) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === undefined || (newVisitForm.isFirstVisit === false && !implementationStatus)) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === null || (newVisitForm.isFirstVisit === true && !implementationStatus)) ? "not-allowed" : "pointer"
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === undefined || (newVisitForm.isFirstVisit === false && !implementationStatus)) ? "not-allowed" : "pointer"
               }}>▶ Start Observation</button>
               </>
             )}
@@ -1293,7 +1298,7 @@ export default function Page() {
                     grade: "",
                     totalStudents: "",
                     schoolName: "",
-                    isFirstVisit: null,
+                    isFirstVisit: undefined,
                   });
                   setNewVisitStep("firstVisit");
                   setScreen("new-visit");
