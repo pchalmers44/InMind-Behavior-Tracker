@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
+import { GRADE_OPTIONS } from "@/lib/grades";
 
 type Behavior = {
   id: string;
@@ -22,6 +23,7 @@ type Visit = {
   subjectName: string;
   observerName: string;
   grade?: string;
+  isFirstVisit?: boolean;
   schoolName?: string;
   totalStudents?: number | null;
   startTime: number;
@@ -48,6 +50,7 @@ type NewVisitFormState = {
   grade: string;
   totalStudents: string;
   schoolName: string;
+  isFirstVisit: boolean | null;
 };
 
 // ─── Behavior Library ────────────────────────────────────────────────────────
@@ -55,7 +58,6 @@ const BEHAVIOR_LIBRARY = {
   student: [
     // Undesirable / Challenging behaviors
     { id: "disruption", label: "Disruption", type: "frequency", category: "challenging" },
-    { id: "defiance", label: "Defiance", type: "frequency", category: "challenging" },
     { id: "work-refusal", label: "Work Refusal", type: "frequency", category: "challenging" },
     { id: "verbal-aggression", label: "Verbal Aggression", type: "frequency", category: "challenging" },
     { id: "physical-aggression", label: "Physical Aggression", type: "frequency", category: "challenging" },
@@ -65,7 +67,6 @@ const BEHAVIOR_LIBRARY = {
     { id: "negative-peer-interaction", label: "Negative Peer Interaction", type: "frequency", category: "challenging" },
     { id: "self-injurious", label: "Self-Injurious Behavior", type: "frequency", category: "challenging" },
     { id: "property-destruction", label: "Property Destruction", type: "frequency", category: "challenging" },
-    { id: "stereotypy", label: "Stereotypy / Self-Stimulatory", type: "duration", category: "challenging" },
     // Desirable / Positive behaviors
     { id: "positive-coping", label: "Positive Coping Strategies", type: "frequency", category: "positive" },
     { id: "self-advocacy", label: "Self-Advocacy", type: "frequency", category: "positive" },
@@ -75,11 +76,6 @@ const BEHAVIOR_LIBRARY = {
     { id: "following-directions", label: "Following Directions", type: "frequency", category: "positive" },
     { id: "on-task", label: "On-Task", type: "duration", category: "positive" },
     { id: "task-completion", label: "Task Completion", type: "frequency", category: "positive" },
-    { id: "self-regulation", label: "Self-Regulation / Coping Strategy Use", type: "frequency", category: "positive" },
-    { id: "raises-hand", label: "Raises Hand / Waits Turn", type: "frequency", category: "positive" },
-    { id: "sharing-turns", label: "Sharing / Turn-Taking", type: "frequency", category: "positive" },
-    { id: "appropriate-requests", label: "Appropriate Requests for Help", type: "frequency", category: "positive" },
-    { id: "verbal-participation", label: "Verbal Participation / Academic Response", type: "frequency", category: "positive" },
   ],
   classroom: [
     // Undesirable behaviors
@@ -94,12 +90,10 @@ const BEHAVIOR_LIBRARY = {
     // Desirable behaviors
     { id: "cls-positive-peer", label: "Positive Peer Interactions", type: "frequency", category: "positive" },
     { id: "cls-on-task", label: "On-Task", type: "frequency", category: "positive", measureType: "student-count" },
-    { id: "cls-participation", label: "Student Participation", type: "frequency", category: "positive", measureType: "student-count" },
     { id: "cls-following-directions", label: "Following Directions", type: "frequency", category: "positive" },
     { id: "cls-coping-strategies", label: "Positive Use of Coping Strategies", type: "frequency", category: "positive" },
     { id: "cls-praise", label: "Praise / Positive Feedback", type: "frequency", category: "positive" },
     { id: "cls-behavior-specific-praise", label: "Behavior-Specific Praise", type: "frequency", category: "positive" },
-    { id: "cls-instructional-time", label: "Instructional Time", type: "duration", category: "positive" },
     { id: "cls-smooth-transitions", label: "Smooth / Successful Transitions", type: "frequency", category: "positive" },
   ]
 };
@@ -163,6 +157,46 @@ function IntensityPicker({ value, onChange }: { value: number | null | undefined
 }
 
 // ─── Active Visit Screen ──────────────────────────────────────────────────────
+function FirstVisitSelector({
+  value,
+  onChange,
+}: {
+  value: boolean | null;
+  onChange: (val: boolean) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 10 }}>
+        IS THIS THE FIRST VISIT?
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <label style={{
+          flex: 1, display: "flex", alignItems: "center", gap: 10,
+          padding: "12px 14px", borderRadius: 10,
+          border: `2px solid ${value === true ? "#38bdf8" : "#334155"}`,
+          background: value === true ? "#38bdf822" : "#1e293b",
+          color: value === true ? "#38bdf8" : "#e2e8f0",
+          cursor: "pointer", userSelect: "none",
+        }}>
+          <input type="radio" name="isFirstVisit" checked={value === true} onChange={() => onChange(true)} />
+          Yes
+        </label>
+        <label style={{
+          flex: 1, display: "flex", alignItems: "center", gap: 10,
+          padding: "12px 14px", borderRadius: 10,
+          border: `2px solid ${value === false ? "#38bdf8" : "#334155"}`,
+          background: value === false ? "#38bdf822" : "#1e293b",
+          color: value === false ? "#38bdf8" : "#e2e8f0",
+          cursor: "pointer", userSelect: "none",
+        }}>
+          <input type="radio" name="isFirstVisit" checked={value === false} onChange={() => onChange(false)} />
+          No
+        </label>
+      </div>
+    </div>
+  );
+}
+
 function ActiveVisit({
   visit,
   onComplete,
@@ -364,7 +398,9 @@ function ActiveVisit({
                   <div style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>{b.label}</div>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
                     <Badge color={b.type === "frequency" ? "#818cf8" : "#34d399"}>
-                      {b.type === "frequency" ? "Frequency" : "Duration"}
+                      {b.type === "frequency"
+                        ? (b.measureType === "student-count" ? "Student Count" : "Frequency")
+                        : "Duration"}
                     </Badge>
                     {b.category === "positive" && <Badge color="#4ade80">❆ Positive</Badge>}
                     {b.category === "challenging" && <Badge color="#f87171">⚠ Challenging</Badge>}
@@ -381,7 +417,13 @@ function ActiveVisit({
                   {b.measureType === "student-count" ? (
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <div>
-                        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>NUMBER OF STUDENTS</div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                          {b.id === "cls-on-task"
+                            ? "Number of Students On Task"
+                            : b.id === "cls-off-task"
+                              ? "Number of Students Off Task"
+                              : "Number of Students"}
+                        </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <button onClick={() => setBehaviors(prev => prev.map(bb => bb.id === b.id ? { ...bb, count: Math.max(0, (bb.count || 0) - 1) } : bb))} style={{
                             background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8,
@@ -821,10 +863,19 @@ export default function Page() {
   const [data, setData] = useState<DataState | null>(null);
   const [screen, setScreen] = useState<"home" | "new-visit" | "active" | "history" | "reports">("home"); // home | new-visit | active | history | reports
   const [activeVisit, setActiveVisit] = useState<Visit | null>(null);
-  const [newVisitForm, setNewVisitForm] = useState<NewVisitFormState>({ type: "student", subjectName: "", observerName: "", grade: "", totalStudents: "", schoolName: "" });
+  const [newVisitForm, setNewVisitForm] = useState<NewVisitFormState>({
+    type: "student",
+    subjectName: "",
+    observerName: "",
+    grade: "",
+    totalStudents: "",
+    schoolName: "",
+    isFirstVisit: null,
+  });
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
   const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
   const [implementationStatus, setImplementationStatus] = useState("");
+  const [newVisitStep, setNewVisitStep] = useState<"firstVisit" | "details">("firstVisit");
 
   useEffect(() => {
     (async () => {
@@ -863,7 +914,9 @@ export default function Page() {
 
   const startVisit = () => {
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
-    if (!implementationStatus) return;
+    if (!newVisitForm.grade) return;
+    if (newVisitForm.isFirstVisit === null) return;
+    if (newVisitForm.isFirstVisit === true && !implementationStatus) return;
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
@@ -871,7 +924,12 @@ export default function Page() {
     ).sort((a, b) => b.startTime - a.startTime);
 
     const prevBehaviors = prevVisits.length > 0
-      ? (prevVisits[0].behaviors || []).map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }))
+      ? (() => {
+        const allowedBehaviorIds = new Set(BEHAVIOR_LIBRARY[newVisitForm.type].map(b => b.id));
+        return (prevVisits[0].behaviors || [])
+          .filter(b => allowedBehaviorIds.has(b.id))
+          .map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }));
+      })()
       : [];
 
     const visit: Visit = {
@@ -884,7 +942,8 @@ export default function Page() {
       totalStudents: newVisitForm.type === "classroom" ? (parseInt(newVisitForm.totalStudents) || null) : null,
       startTime: Date.now(),
       behaviors: prevBehaviors,
-      implementationStatus,
+      isFirstVisit: newVisitForm.isFirstVisit,
+      implementationStatus: newVisitForm.isFirstVisit ? implementationStatus : undefined,
       prevVisit: prevVisits[0] || null
     } as any;
     setActiveVisit(visit);
@@ -897,7 +956,7 @@ export default function Page() {
     setData(updated);
 
     (async () => {
-      const visitObject = {
+      const visitObjectBase = {
         id: crypto.randomUUID(),
         subject_name: completedVisit.subjectName,
         observer_name: completedVisit.observerName,
@@ -905,33 +964,47 @@ export default function Page() {
         school_name: completedVisit.schoolName ?? "",
         grade: completedVisit.grade ?? "",
         total_students: completedVisit.totalStudents ?? 0,
-        implementation_status: completedVisit.implementationStatus ?? implementationStatus,
         start_time: completedVisit.startTime ? new Date(completedVisit.startTime).getTime() : null,
         end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
         total_duration: completedVisit.totalDuration ?? null,
         behaviors: completedVisit.behaviors ?? [],
       };
 
-      const { data, error } = await supabase
-        .from("visits")
-        .insert([visitObject])
-        .select();
+      const visitObject = {
+        ...visitObjectBase,
+        ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
+        ...(completedVisit.isFirstVisit ? { implementation_status: completedVisit.implementationStatus ?? implementationStatus } : {}),
+      };
 
-      console.log("Insert data:", data);
+      let insertResult = await supabase.from("visits").insert([visitObject]).select();
+      if (insertResult.error && /is_first_visit/i.test(insertResult.error.message || "")) {
+        insertResult = await supabase.from("visits").insert([visitObjectBase as any]).select();
+      }
 
-      if (error) {
-        console.error("Supabase error message:", error.message);
-        console.error("Supabase error details:", error.details);
-        console.error("Supabase error hint:", error.hint);
-        console.error("Full error object:", JSON.stringify(error, null, 2));
+      console.log("Insert data:", insertResult.data);
+
+      if (insertResult.error) {
+        console.error("Supabase error message:", insertResult.error.message);
+        console.error("Supabase error details:", (insertResult.error as any).details);
+        console.error("Supabase error hint:", (insertResult.error as any).hint);
+        console.error("Full error object:", JSON.stringify(insertResult.error, null, 2));
       }
     })();
 
     setActiveVisit(null);
     setScreen("home");
     setTab("home");
-    setNewVisitForm({ type: "student", subjectName: "", observerName: "", grade: "", totalStudents: "", schoolName: "" });
+    setNewVisitForm({
+      type: "student",
+      subjectName: "",
+      observerName: "",
+      grade: "",
+      totalStudents: "",
+      schoolName: "",
+      isFirstVisit: null,
+    });
     setImplementationStatus("");
+    setNewVisitStep("firstVisit");
   };
 
   const allVisits = (data?.visits || []).sort((a, b) => b.startTime - a.startTime);
@@ -994,14 +1067,59 @@ export default function Page() {
         {screen === "new-visit" && (
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
-              <button onClick={() => { setImplementationStatus(""); setScreen("home"); setTab("home"); }} style={{
+              <button onClick={() => {
+                setImplementationStatus("");
+                setNewVisitStep("firstVisit");
+                setNewVisitForm(p => ({ ...p, isFirstVisit: null }));
+                setScreen("home");
+                setTab("home");
+              }} style={{
                 background: "none", border: "1px solid #334155", color: "#94a3b8",
                 borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer"
               }}>← Back</button>
               <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>New Visit</div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            {newVisitStep === "firstVisit" && (
+              <>
+                <FirstVisitSelector
+                  value={newVisitForm.isFirstVisit}
+                  onChange={(val) => {
+                    setNewVisitForm(p => ({ ...p, isFirstVisit: val }));
+                    if (!val) setImplementationStatus("");
+                  }}
+                />
+                <button
+                  onClick={() => setNewVisitStep("details")}
+                  disabled={newVisitForm.isFirstVisit === null}
+                  style={{
+                    width: "100%",
+                    background: newVisitForm.isFirstVisit === null ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
+                    color: newVisitForm.isFirstVisit === null ? "#475569" : "#0f172a",
+                    border: "none",
+                    borderRadius: 12,
+                    padding: "14px 16px",
+                    fontSize: 15,
+                    fontWeight: 900,
+                    cursor: newVisitForm.isFirstVisit === null ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Continue
+                </button>
+              </>
+            )}
+
+            {newVisitStep === "details" && (
+              <>
+                <FirstVisitSelector
+                  value={newVisitForm.isFirstVisit}
+                  onChange={(val) => {
+                    setNewVisitForm(p => ({ ...p, isFirstVisit: val }));
+                    if (!val) setImplementationStatus("");
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
               {(["student", "classroom"] as const).map(t => (
                 <button key={t} onClick={() => setNewVisitForm(p => ({ ...p, type: t }))} style={{
                   flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700,
@@ -1011,16 +1129,15 @@ export default function Page() {
                   textTransform: "capitalize"
                 }}>{t === "student" ? "👤 Student" : "🏫 Classroom"}</button>
               ))}
-            </div>
+                </div>
 
-            {[
-              { key: "subjectName", label: newVisitForm.type === "student" ? "Student Name" : "Classroom / Teacher", placeholder: newVisitForm.type === "student" ? "e.g. Alex M." : "e.g. Ms. Johnson – Room 12" },
-              { key: "observerName", label: "Observer Name", placeholder: "Your name" },
-              { key: "grade", label: "Grade / Setting (optional)", placeholder: "e.g. 3rd grade" },
-            ].map(f => (
+            {([
+              { key: "subjectName" as const, label: newVisitForm.type === "student" ? "Student Name" : "Classroom / Teacher", placeholder: newVisitForm.type === "student" ? "e.g. Alex M." : "e.g. Ms. Johnson – Room 12" },
+              { key: "observerName" as const, label: "Observer Name", placeholder: "Your name" },
+            ] as const).map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>{f.label.toUpperCase()}</div>
-                <input value={newVisitForm[f.key as keyof NewVisitFormState]} onChange={e => setNewVisitForm(p => ({ ...p, [f.key as keyof NewVisitFormState]: e.target.value }))}
+                <input value={newVisitForm[f.key]} onChange={e => setNewVisitForm(p => ({ ...p, [f.key]: e.target.value }))}
                   placeholder={f.placeholder} style={{
                     width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
                     color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
@@ -1028,6 +1145,27 @@ export default function Page() {
                   }} />
               </div>
             ))}
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>GRADE</div>
+              <select
+                required
+                value={newVisitForm.grade}
+                onChange={e => setNewVisitForm(p => ({ ...p, grade: e.target.value }))}
+                style={{
+                  width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                  color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                  fontFamily: "inherit"
+                }}
+              >
+                <option value="" disabled>
+                  Select Grade
+                </option>
+                {GRADE_OPTIONS.map(g => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            </div>
 
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>SCHOOL NAME</div>
@@ -1056,15 +1194,16 @@ export default function Page() {
                     fontFamily: "inherit"
                   }} />
                 <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
-                  Used to calculate % of students for On-Task, Off-Task, and Student Participation
+                  Used to calculate % of students for On-Task and Off-Task behaviors
                 </div>
               </div>
             )}
 
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
-                Did the teacher implement previous feedback/interventions?
-              </div>
+            {newVisitForm.isFirstVisit === true && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+                  Did the teacher implement previous feedback/interventions?
+                </div>
               <select
                 value={implementationStatus}
                 onChange={e => setImplementationStatus(e.target.value)}
@@ -1079,7 +1218,8 @@ export default function Page() {
                 <option value="not">No</option>
                 <option value="partially">Partially</option>
               </select>
-            </div>
+              </div>
+            )}
 
             {/* Prior visits hint */}
             {newVisitForm.subjectName.trim() && (() => {
@@ -1103,14 +1243,22 @@ export default function Page() {
             })()}
 
             <button onClick={startVisit}
-              disabled={!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus}
+              disabled={
+                !newVisitForm.subjectName.trim() ||
+                !newVisitForm.observerName.trim() ||
+                !newVisitForm.grade ||
+                newVisitForm.isFirstVisit === null ||
+                (newVisitForm.isFirstVisit === true && !implementationStatus)
+              }
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus)
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === null || (newVisitForm.isFirstVisit === true && !implementationStatus))
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === null || (newVisitForm.isFirstVisit === true && !implementationStatus)) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !implementationStatus) ? "not-allowed" : "pointer"
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === null || (newVisitForm.isFirstVisit === true && !implementationStatus)) ? "not-allowed" : "pointer"
               }}>▶ Start Observation</button>
+              </>
+            )}
           </div>
         )}
 
@@ -1136,7 +1284,21 @@ export default function Page() {
             {/* Home */}
             {tab === "home" && (
               <div>
-                <button onClick={() => { setImplementationStatus(""); setScreen("new-visit"); setTab(""); }} style={{
+                <button onClick={() => {
+                  setImplementationStatus("");
+                  setNewVisitForm({
+                    type: "student",
+                    subjectName: "",
+                    observerName: "",
+                    grade: "",
+                    totalStudents: "",
+                    schoolName: "",
+                    isFirstVisit: null,
+                  });
+                  setNewVisitStep("firstVisit");
+                  setScreen("new-visit");
+                  setTab("");
+                }} style={{
                   width: "100%", background: "linear-gradient(135deg, #38bdf8, #818cf8)",
                   color: "#0f172a", border: "none", borderRadius: 14, padding: "20px",
                   fontSize: 18, fontWeight: 900, cursor: "pointer", marginBottom: 24,
