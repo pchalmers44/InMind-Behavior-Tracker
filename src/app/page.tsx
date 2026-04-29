@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
+import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { GRADE_OPTIONS } from "@/lib/grades";
 
@@ -55,7 +56,7 @@ type NewVisitFormState = {
   isFirstVisit?: boolean;
 };
 
-// ─── Behavior Library ────────────────────────────────────────────────────────
+// â”€â”€â”€ Behavior Library â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const BEHAVIOR_LIBRARY = {
   student: [
     // Undesirable / Challenging behaviors
@@ -101,14 +102,14 @@ const BEHAVIOR_LIBRARY = {
 };
 
 const INTENSITY_LEVELS = [
-  { value: 1, label: "1 – Mild", color: "#4ade80", desc: "Minimal impact" },
-  { value: 2, label: "2 – Moderate", color: "#facc15", desc: "Noticeable disruption" },
-  { value: 3, label: "3 – Severe", color: "#f97316", desc: "Significant impact" },
-  { value: 4, label: "4 – Crisis", color: "#ef4444", desc: "Immediate intervention" },
+  { value: 1, label: "1 â€“ Mild", color: "#4ade80", desc: "Minimal impact" },
+  { value: 2, label: "2 â€“ Moderate", color: "#facc15", desc: "Noticeable disruption" },
+  { value: 3, label: "3 â€“ Severe", color: "#f97316", desc: "Significant impact" },
+  { value: 4, label: "4 â€“ Crisis", color: "#ef4444", desc: "Immediate intervention" },
 ];
 
-// ─── Storage helpers ─────────────────────────────────────────────────────────
-// ─── Utilities ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Storage helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€â”€ Utilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function fmtTime(sec: number) {
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
@@ -119,7 +120,7 @@ function fmtDuration(sec: number) {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 function calcRate(freq: number, durationSec: number) {
-  if (!durationSec) return "—";
+  if (!durationSec) return "â€”";
   const perMin = (freq / (durationSec / 60)).toFixed(2);
   return `${perMin}/min`;
 }
@@ -131,7 +132,7 @@ function timeStr(ts: number | string | Date | null | undefined) {
   return new Date(ts as any).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
-// ─── Components ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function Badge({ color, children }: { color: string; children: ReactNode }) {
   return (
     <span style={{
@@ -158,7 +159,7 @@ function IntensityPicker({ value, onChange }: { value: number | null | undefined
   );
 }
 
-// ─── Active Visit Screen ──────────────────────────────────────────────────────
+// â”€â”€â”€ Active Visit Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function FirstVisitSelector({
   value,
   onChange,
@@ -471,10 +472,10 @@ function ActiveVisit({
             </div>
             <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>{visit.subjectName}</div>
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 2 }}>
-              {visit.type === "student" ? "Student" : "Classroom"} • {visit.observerName}
+              {visit.type === "student" ? "Student" : "Classroom"} â€¢ {visit.observerName}
             </div>
             {visit.schoolName && (
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 1 }}>🏫 {visit.schoolName}</div>
+              <div style={{ fontSize: 12, color: "#64748b", marginTop: 1 }}>ðŸ« {visit.schoolName}</div>
             )}
           </div>
           <div style={{ textAlign: "right" }}>
@@ -494,7 +495,7 @@ function ActiveVisit({
           border: "1px solid #f59e0b55"
         }}>
           <div style={{ fontSize: 12, color: "#f59e0b", fontWeight: 700, marginBottom: 8 }}>
-            ⚡ FOLLOW-UP: Recommendations from {dateStr(prevVisit.endTime || prevVisit.startTime)}
+            âš¡ FOLLOW-UP: Recommendations from {dateStr(prevVisit.endTime || prevVisit.startTime)}
           </div>
           <div style={{ fontSize: 13, color: "#cbd5e1", marginBottom: 12, fontStyle: "italic" }}>
             "{prevVisit.recommendations}"
@@ -558,14 +559,14 @@ function ActiveVisit({
                         ? (b.measureType === "student-count" ? "Student Count" : "Frequency")
                         : "Duration"}
                     </Badge>
-                    {b.category === "positive" && <Badge color="#4ade80">❆ Positive</Badge>}
-                    {b.category === "challenging" && <Badge color="#f87171">⚠ Challenging</Badge>}
+                    {b.category === "positive" && <Badge color="#4ade80">â† Positive</Badge>}
+                    {b.category === "challenging" && <Badge color="#f87171">âš  Challenging</Badge>}
                   </div>
                 </div>
                 <button onClick={() => removeBehavior(b.id)} style={{
                   background: "none", border: "none", color: "#475569", fontSize: 18,
                   cursor: "pointer", lineHeight: 1, padding: 2
-                }}>×</button>
+                }}>Ã—</button>
               </div>
 
               {b.type === "frequency" ? (
@@ -584,7 +585,7 @@ function ActiveVisit({
                           <button onClick={() => setBehaviors(prev => prev.map(bb => bb.id === b.id ? { ...bb, count: Math.max(0, (bb.count || 0) - 1) } : bb))} style={{
                             background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8,
                             width: 36, height: 36, fontSize: 20, fontWeight: 800, cursor: "pointer", lineHeight: 1
-                          }}>−</button>
+                          }}>âˆ’</button>
                           <div style={{ textAlign: "center", minWidth: 50 }}>
                             <div style={{ fontSize: 32, fontWeight: 900, color: "#38bdf8", lineHeight: 1 }}>{b.count || 0}</div>
                             <div style={{ fontSize: 10, color: "#64748b" }}>students</div>
@@ -633,7 +634,7 @@ function ActiveVisit({
                     background: isRunning ? "linear-gradient(135deg, #f97316, #fb923c)" : "linear-gradient(135deg, #34d399, #6ee7b7)",
                     color: isRunning ? "white" : "#0f172a", border: "none", borderRadius: 12,
                     padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer", minWidth: 100
-                  }}>{isRunning ? "⏹ Stop" : "▶ Start"}</button>
+                  }}>{isRunning ? "â¹ Stop" : "â–¶ Start"}</button>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 28, fontWeight: 900, color: isRunning ? "#34d399" : "#6ee7b7", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
                       {fmtDuration(durSec)}
@@ -676,7 +677,7 @@ function ActiveVisit({
                     color: cat === "positive" ? "#4ade80" : "#f87171",
                     letterSpacing: "0.06em"
                   }}>
-                    {cat === "positive" ? "✦ POSITIVE BEHAVIORS" : "⚠ CHALLENGING BEHAVIORS"}
+                    {cat === "positive" ? "âœ¦ POSITIVE BEHAVIORS" : "âš  CHALLENGING BEHAVIORS"}
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {catBehaviors.map(b => (
@@ -782,12 +783,12 @@ function ActiveVisit({
         width: "100%", background: "linear-gradient(135deg, #10b981, #34d399)",
         color: "#0f172a", border: "none", borderRadius: 12, padding: "16px",
         fontSize: 16, fontWeight: 900, cursor: "pointer", letterSpacing: "0.02em"
-      }}>✓ Complete Visit ({fmtTime(elapsed)})</button>
+      }}>âœ“ Complete Visit ({fmtTime(elapsed)})</button>
     </div>
   );
 }
 
-// ─── Visit Summary Card ───────────────────────────────────────────────────────
+// â”€â”€â”€ Visit Summary Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
   const implColor = visit.implementationStatus === "fully" ? "#4ade80"
     : visit.implementationStatus === "partially" ? "#facc15"
@@ -805,9 +806,9 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
         <div>
           <div style={{ fontSize: 15, fontWeight: 800, color: "#f1f5f9" }}>{visit.subjectName}</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-            {dateStr(visit.startTime)} {timeStr(visit.startTime)} · {fmtDuration(visit.totalDuration || 0)} · {visit.observerName}
+            {dateStr(visit.startTime)} {timeStr(visit.startTime)} Â· {fmtDuration(visit.totalDuration || 0)} Â· {visit.observerName}
           </div>
-          {visit.schoolName && <div style={{ fontSize: 11, color: "#475569", marginTop: 1 }}>🏫 {visit.schoolName}</div>}
+          {visit.schoolName && <div style={{ fontSize: 11, color: "#475569", marginTop: 1 }}>ðŸ« {visit.schoolName}</div>}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Badge color={visit.type === "student" ? "#818cf8" : "#f59e0b"}>
@@ -821,7 +822,7 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
           <span key={b.id} style={{
             background: "#0f172a", border: "1px solid #334155", borderRadius: 6,
             padding: "3px 8px", fontSize: 11, color: "#94a3b8"
-          }}>{b.label}: {b.type === "frequency" ? `${b.count || 0}×` : fmtDuration(b.durationSec || 0)}</span>
+          }}>{b.label}: {b.type === "frequency" ? `${b.count || 0}Ã—` : fmtDuration(b.durationSec || 0)}</span>
         ))}
         {(visit.behaviors || []).length > 4 && (
           <span style={{ color: "#475569", fontSize: 11, padding: "3px 8px" }}>+{(visit.behaviors || []).length - 4} more</span>
@@ -831,7 +832,7 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
   );
 }
 
-// ─── Visit Detail Modal ───────────────────────────────────────────────────────
+// â”€â”€â”€ Visit Detail Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) {
   return (
     <div style={{
@@ -846,12 +847,12 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
           <div>
             <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>{visit.subjectName}</div>
             <div style={{ fontSize: 13, color: "#64748b" }}>
-              {dateStr(visit.startTime)} · {timeStr(visit.startTime)}–{timeStr(visit.endTime)} · {fmtDuration(visit.totalDuration || 0)}
+              {dateStr(visit.startTime)} Â· {timeStr(visit.startTime)}â€“{timeStr(visit.endTime)} Â· {fmtDuration(visit.totalDuration || 0)}
             </div>
             <div style={{ fontSize: 13, color: "#94a3b8" }}>Observer: {visit.observerName}</div>
-            {visit.schoolName && <div style={{ fontSize: 13, color: "#64748b" }}>🏫 {visit.schoolName}</div>}
+            {visit.schoolName && <div style={{ fontSize: 13, color: "#64748b" }}>ðŸ« {visit.schoolName}</div>}
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", fontSize: 22, cursor: "pointer" }}>×</button>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", fontSize: 22, cursor: "pointer" }}>Ã—</button>
         </div>
 
         {visit.implementationStatus && (
@@ -915,7 +916,7 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
   );
 }
 
-// ─── Reports View ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Reports View â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function Reports({ visits }: { visits: Visit[] }) {
   const [filter, setFilter] = useState("all");
   const [selectedSubject, setSelectedSubject] = useState("all");
@@ -1048,8 +1049,8 @@ function Reports({ visits }: { visits: Visit[] }) {
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
-export default function Page() {
+// â”€â”€â”€ Main App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function PageInner() {
   const [data, setData] = useState<DataState | null>(null);
   const [screen, setScreen] = useState<"home" | "new-visit" | "active" | "history" | "reports">("home"); // home | new-visit | active | history | reports
   const [activeVisit, setActiveVisit] = useState<Visit | null>(null);
@@ -1065,7 +1066,12 @@ export default function Page() {
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
   const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
   const [implementationStatus, setImplementationStatus] = useState("");
-  const [newVisitStep, setNewVisitStep] = useState<"firstVisit" | "details">("firstVisit");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlFirstVisitParam = searchParams.get("firstVisit");
+  const isFirstVisitFromUrl =
+    urlFirstVisitParam === "true" ? true : urlFirstVisitParam === "false" ? false : undefined;
+  const newVisitStep = (searchParams.get("step") === "details" ? "details" : "firstVisit") as "firstVisit" | "details";
 
   useEffect(() => {
     (async () => {
@@ -1105,8 +1111,8 @@ export default function Page() {
   const startVisit = () => {
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
     if (!newVisitForm.grade) return;
-    if (newVisitForm.isFirstVisit === undefined) return;
-    if (newVisitForm.isFirstVisit === false && !implementationStatus) return;
+    if (isFirstVisitFromUrl === undefined) return;
+    if (isFirstVisitFromUrl === false && !implementationStatus) return;
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
@@ -1132,8 +1138,8 @@ export default function Page() {
       totalStudents: newVisitForm.type === "classroom" ? (parseInt(newVisitForm.totalStudents) || null) : null,
       startTime: Date.now(),
       behaviors: prevBehaviors,
-      isFirstVisit: newVisitForm.isFirstVisit,
-      implementationStatus: newVisitForm.isFirstVisit === false ? implementationStatus : undefined,
+      isFirstVisit: isFirstVisitFromUrl,
+      implementationStatus: isFirstVisitFromUrl === false ? implementationStatus : undefined,
       prevVisit: prevVisits[0] || null
     } as any;
     setActiveVisit(visit);
@@ -1194,7 +1200,7 @@ export default function Page() {
       isFirstVisit: undefined,
     });
     setImplementationStatus("");
-    setNewVisitStep("firstVisit");
+    router.push("/?step=firstVisit");
   };
 
   const allVisits = (data?.visits || []).sort((a, b) => b.startTime - a.startTime);
@@ -1239,7 +1245,7 @@ export default function Page() {
             background: "linear-gradient(135deg, #38bdf8, #818cf8)",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 16
-          }}>👁</div>
+          }}>ðŸ‘</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#f1f5f9", lineHeight: 1 }}>InMind Observer</div>
             <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1 }}>Behavior Tracking</div>
@@ -1248,7 +1254,7 @@ export default function Page() {
         {screen === "active" && (
           <div style={{ fontSize: 12, color: "#f97316", fontWeight: 700, background: "#f9731622",
             padding: "4px 10px", borderRadius: 20, border: "1px solid #f9731644" }}>
-            ● LIVE
+            â— LIVE
           </div>
         )}
       </div>
@@ -1271,58 +1277,38 @@ export default function Page() {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
               <button onClick={() => {
                 setImplementationStatus("");
-                setNewVisitStep("firstVisit");
-                setNewVisitForm(p => ({ ...p, isFirstVisit: undefined }));
+                setNewVisitForm(p => ({ ...p, subjectName: "" }));
+                router.push("/?step=firstVisit");
                 setScreen("home");
                 setTab("home");
               }} style={{
                 background: "none", border: "1px solid #334155", color: "#94a3b8",
                 borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer"
-              }}>← Back</button>
+              }}>â† Back</button>
               <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>New Visit</div>
             </div>
 
             {newVisitStep === "firstVisit" && (
               <>
                 <FirstVisitSelector
-                  value={newVisitForm.isFirstVisit}
+                  value={isFirstVisitFromUrl}
                   onChange={(val) => {
-                    setNewVisitForm(p => ({ ...p, isFirstVisit: val, ...(val === false ? { subjectName: "" } : {}) }));
-                    if (val) setImplementationStatus("");
-                    setNewVisitStep("details");
+                    if (val === true) setImplementationStatus("");
+                    if (val === false) setNewVisitForm(p => ({ ...p, subjectName: "" }));
+                    router.push(`/?step=details&firstVisit=${val}`);
                   }}
                 />
-                {false && (
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
-                      Did the teacher implement previous feedback/interventions?
-                    </div>
-                    <select
-                      value={implementationStatus}
-                      onChange={e => setImplementationStatus(e.target.value)}
-                      style={{
-                        width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
-                        color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
-                        fontFamily: "inherit"
-                      }}
-                    >
-                      <option value="">Select…</option>
-                      <option value="fully">Yes</option>
-                      <option value="not">No</option>
-                      <option value="partially">Partially</option>
-                    </select>
-                  </div>
-                )}
               </>
             )}
 
             {newVisitStep === "details" && (
               <>
                 <FirstVisitSelector
-                  value={newVisitForm.isFirstVisit}
+                  value={isFirstVisitFromUrl}
                   onChange={(val) => {
-                    setNewVisitForm(p => ({ ...p, isFirstVisit: val, ...(val === false ? { subjectName: "" } : {}) }));
-                    if (val) setImplementationStatus("");
+                    if (val === true) setImplementationStatus("");
+                    if (val === false) setNewVisitForm(p => ({ ...p, subjectName: "" }));
+                    router.push(`/?step=details&firstVisit=${val}`);
                   }}
                 />
 
@@ -1331,24 +1317,24 @@ export default function Page() {
                 <button key={t} onClick={() => setNewVisitForm(p => ({
                   ...p,
                   type: t,
-                  ...(p.isFirstVisit === false ? { subjectName: "" } : {})
+                  ...(isFirstVisitFromUrl === false ? { subjectName: "" } : {})
                 }))} style={{
                   flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700,
                   border: `2px solid ${newVisitForm.type === t ? "#38bdf8" : "#334155"}`,
                   background: newVisitForm.type === t ? "#38bdf822" : "#1e293b",
                   color: newVisitForm.type === t ? "#38bdf8" : "#64748b", cursor: "pointer",
                   textTransform: "capitalize"
-                }}>{t === "student" ? "👤 Student" : "🏫 Classroom"}</button>
+                }}>{t === "student" ? "ðŸ‘¤ Student" : "ðŸ« Classroom"}</button>
               ))}
                 </div>
 
             {([
-              { key: "subjectName" as const, label: newVisitForm.type === "student" ? "Student Name" : "Classroom / Teacher", placeholder: newVisitForm.type === "student" ? "e.g. Alex M." : "e.g. Ms. Johnson – Room 12" },
+              { key: "subjectName" as const, label: newVisitForm.type === "student" ? "Student Name" : "Classroom / Teacher", placeholder: newVisitForm.type === "student" ? "e.g. Alex M." : "e.g. Ms. Johnson â€“ Room 12" },
               { key: "observerName" as const, label: "Observer Name", placeholder: "Your name" },
             ] as const).map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>{f.label.toUpperCase()}</div>
-                {f.key === "subjectName" && newVisitForm.isFirstVisit === false && subjectNameOptions.length > 0 ? (
+                {f.key === "subjectName" && isFirstVisitFromUrl === false && subjectNameOptions.length > 0 ? (
                   <SearchableSelect
                     options={subjectNameOptions}
                     value={newVisitForm.subjectName}
@@ -1367,9 +1353,9 @@ export default function Page() {
                     }}
                   />
                 )}
-                {f.key === "subjectName" && newVisitForm.isFirstVisit === false && subjectNameOptions.length === 0 && (
+                {f.key === "subjectName" && isFirstVisitFromUrl === false && subjectNameOptions.length === 0 && (
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
-                    No previous names found yetâ€”free entry is enabled for now.
+                    No previous names found yetÃ¢â‚¬â€free entry is enabled for now.
                   </div>
                 )}
               </div>
@@ -1428,7 +1414,7 @@ export default function Page() {
               </div>
             )}
 
-            {newVisitForm.isFirstVisit === false && (
+            {isFirstVisitFromUrl === false && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
                   Did the teacher implement previous feedback/interventions?
@@ -1442,7 +1428,7 @@ export default function Page() {
                   fontFamily: "inherit"
                 }}
               >
-                <option value="">Select…</option>
+                <option value="">Selectâ€¦</option>
                 <option value="fully">Yes</option>
                 <option value="not">No</option>
                 <option value="partially">Partially</option>
@@ -1461,11 +1447,11 @@ export default function Page() {
                   border: "1px solid #38bdf844"
                 }}>
                   <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
-                    ✓ {prior.length} prior visit{prior.length !== 1 ? "s" : ""} found
+                    âœ“ {prior.length} prior visit{prior.length !== 1 ? "s" : ""} found
                   </div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     Previous behaviors will be pre-loaded. Last visit: {dateStr(prior[0].startTime)}
-                    {prior[0].recommendations && " · Has recommendations for follow-up"}
+                    {prior[0].recommendations && " Â· Has recommendations for follow-up"}
                   </div>
                 </div>
               ) : null;
@@ -1476,16 +1462,16 @@ export default function Page() {
                 !newVisitForm.subjectName.trim() ||
                 !newVisitForm.observerName.trim() ||
                 !newVisitForm.grade ||
-                newVisitForm.isFirstVisit === undefined ||
-                (newVisitForm.isFirstVisit === false && !implementationStatus)
+                isFirstVisitFromUrl === undefined ||
+                (isFirstVisitFromUrl === false && !implementationStatus)
               }
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === undefined || (newVisitForm.isFirstVisit === false && !implementationStatus))
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus))
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === undefined || (newVisitForm.isFirstVisit === false && !implementationStatus)) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || newVisitForm.isFirstVisit === undefined || (newVisitForm.isFirstVisit === false && !implementationStatus)) ? "not-allowed" : "pointer"
-              }}>▶ Start Observation</button>
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "not-allowed" : "pointer"
+              }}>â–¶ Start Observation</button>
               </>
             )}
           </div>
@@ -1524,7 +1510,7 @@ export default function Page() {
                     schoolName: "",
                     isFirstVisit: undefined,
                   });
-                  setNewVisitStep("firstVisit");
+                  router.push("/?step=firstVisit");
                   setScreen("new-visit");
                   setTab("");
                 }} style={{
@@ -1544,7 +1530,7 @@ export default function Page() {
                       <button onClick={() => { setTab("history"); setScreen("history"); }} style={{
                         width: "100%", background: "none", border: "1px solid #334155",
                         color: "#64748b", borderRadius: 10, padding: "10px", fontSize: 13, cursor: "pointer", marginTop: 4
-                      }}>View all {allVisits.length} visits →</button>
+                      }}>View all {allVisits.length} visits â†’</button>
                     )}
                   </>
                 )}
@@ -1554,7 +1540,7 @@ export default function Page() {
                     textAlign: "center", padding: "48px 24px", color: "#475569",
                     background: "#1e293b", borderRadius: 14, border: "1px dashed #334155"
                   }}>
-                    <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+                    <div style={{ fontSize: 36, marginBottom: 12 }}>ðŸ“‹</div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: "#64748b" }}>No visits yet</div>
                     <div style={{ fontSize: 13, marginTop: 6 }}>Start your first observation above.</div>
                   </div>
@@ -1584,3 +1570,12 @@ export default function Page() {
     </div>
   );
 }
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#0f172a" }} />}>
+      <PageInner />
+    </Suspense>
+  );
+}
+
