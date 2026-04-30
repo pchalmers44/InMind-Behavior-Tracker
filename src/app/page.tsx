@@ -2,6 +2,8 @@
 
 import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { GRADE_OPTIONS } from "@/lib/grades";
 
@@ -27,6 +29,7 @@ type Visit = {
   observerName: string;
   grade?: string;
   isFirstVisit?: boolean;
+  district?: string;
   schoolName?: string;
   totalStudents?: number | null;
   startTime: number;
@@ -52,6 +55,8 @@ type NewVisitFormState = {
   observerName: string;
   grade: string;
   totalStudents: string;
+  selectedDistrict: string;
+  customDistrict: string;
   schoolName: string;
   isFirstVisit?: boolean;
 };
@@ -100,6 +105,69 @@ const BEHAVIOR_LIBRARY = {
     { id: "cls-smooth-transitions", label: "Smooth / Successful Transitions", type: "frequency", category: "positive" },
   ]
 };
+
+const districtSchoolMap: Record<string, readonly string[]> = {
+  "Reading School District": [
+    "Reading High School",
+    "Innovation Academy",
+    "RKAA City Line",
+    "RKAA Glenside",
+    "RKAA Thomas Ford",
+    "Central Middle School",
+    "Northeast Middle School",
+    "Northwest Middle School",
+    "Southern Middle School",
+    "Southwest Middle School",
+    "10th and Green Elementary",
+    "10th and Penn Elementary",
+    "12th and Marion Elementary",
+    "13th and Green Elementary",
+    "13th and Union Elementary",
+    "16th and Haak Elementary",
+    "Amanda E. Stout Elementary",
+    "Glenside Elementary",
+    "Lauer's Park Elementary",
+    "Millmont Elementary",
+    "Northwest Area Elementary",
+    "Riverside Elementary",
+    "Tyson-Schoener Elementary",
+  ],
+  "Colonial School District": [
+    "Colonial Elementary School",
+    "Conshohocken Elementary School",
+    "Plymouth Elementary School",
+    "Ridge Park Elementary School",
+    "Whitemarsh Elementary School",
+    "Colonial Middle School",
+    "Plymouth Whitemarsh High School",
+  ],
+  "Belmont Charter School": [
+    "Inquiry Charter School",
+    "Belmont Academy Charter School",
+    "Belmont Charter Elementary School",
+    "Belmont Middle School",
+    "Belmont High School",
+  ],
+  "Independence Mission School": [
+    "St. Barnabus",
+    "SS. Cyril and Philomena",
+    "St. Frances Cabrini",
+    "The DePaul Catholic School",
+    "St. Helena-Incarnation",
+    "Holy Cross Catholic School",
+    "St. Malachy",
+    "St. Martin de Porres",
+    "St. Martin of Tours",
+    "Our Mother of Sorrows St. Ignatius",
+    "St. Raymond",
+    "St. Rose of Lima",
+    "St. Thomas Aquinas",
+    "St. Veronica",
+  ],
+  "Green Woods Charter School": ["Green Woods Charter School"],
+};
+
+const DISTRICT_OPTIONS = [...Object.keys(districtSchoolMap), "Other"];
 
 const INTENSITY_LEVELS = [
   { value: 1, label: "1 - Mild", color: "#4ade80", desc: "Minimal impact" },
@@ -919,6 +987,81 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
 function Reports({ visits }: { visits: Visit[] }) {
   const [filter, setFilter] = useState("all");
   const [selectedSubject, setSelectedSubject] = useState("all");
+  const [studentFilter, setStudentFilter] = useState("");
+  const [teacherFilter, setTeacherFilter] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState("");
+  const [districtFilter, setDistrictFilter] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const optionSets = useMemo(() => {
+    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    const unique = (vals: string[]) => {
+      const m = new Map<string, string>();
+      for (const v of vals) {
+        const raw = (v || "").trim();
+        if (!raw) continue;
+        const k = norm(raw);
+        if (!m.has(k)) m.set(k, raw);
+      }
+      return Array.from(m.values()).sort((a, b) => a.localeCompare(b));
+    };
+
+    const students: string[] = [];
+    const teachers: string[] = [];
+    const schools: string[] = [];
+    const districts: string[] = [];
+
+    for (const v of visits) {
+      if (v.type === "student") students.push(v.subjectName);
+      if (v.type === "classroom") teachers.push(v.subjectName);
+      if (v.schoolName) schools.push(v.schoolName);
+      if (v.district) districts.push(v.district);
+    }
+
+    return {
+      students: unique(students),
+      teachers: unique(teachers),
+      schools: unique(schools),
+      districts: unique(districts),
+    };
+  }, [visits]);
+
+  const downloadReport = async () => {
+    setDownloading(true);
+    setReportError(null);
+    try {
+      const params = new URLSearchParams();
+      if (studentFilter.trim()) params.set("student", studentFilter.trim());
+      if (teacherFilter.trim()) params.set("teacher", teacherFilter.trim());
+      if (schoolFilter) params.set("school", schoolFilter);
+      if (districtFilter) params.set("district", districtFilter);
+
+      const res = await fetch(`/api/reports?${params.toString()}`, { method: "GET" });
+      if (!res.ok) throw new Error(`Report request failed (${res.status})`);
+
+      const blob = await res.blob();
+      const filename = "observations-report.xlsx";
+      const nav = window.navigator as any;
+      if (typeof nav?.msSaveOrOpenBlob === "function") {
+        nav.msSaveOrOpenBlob(blob, filename);
+      } else {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "Failed to download report.");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const subjects = [...new Set(visits.map(v => v.subjectName))].sort();
   const filtered = visits.filter(v =>
@@ -947,6 +1090,116 @@ function Reports({ visits }: { visits: Visit[] }) {
 
   return (
     <div style={{ maxWidth: 680, margin: "0 auto" }}>
+      {/* Report export filters */}
+      <div style={{
+        background: "#1e293b",
+        borderRadius: 12,
+        padding: 14,
+        border: "1px solid #334155",
+        marginBottom: 16
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 10 }}>
+          EXCEL REPORT
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>STUDENT</div>
+            <input
+              list="report-students"
+              value={studentFilter}
+              onChange={e => setStudentFilter(e.target.value)}
+              placeholder="Search student..."
+              style={{
+                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            />
+            <datalist id="report-students">
+              {optionSets.students.map(s => <option key={s} value={s} />)}
+            </datalist>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>TEACHER</div>
+            <input
+              list="report-teachers"
+              value={teacherFilter}
+              onChange={e => setTeacherFilter(e.target.value)}
+              placeholder="Search teacher..."
+              style={{
+                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            />
+            <datalist id="report-teachers">
+              {optionSets.teachers.map(t => <option key={t} value={t} />)}
+            </datalist>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DISTRICT</div>
+            <select
+              value={districtFilter}
+              onChange={e => setDistrictFilter(e.target.value)}
+              style={{
+                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            >
+              <option value="">All</option>
+              {optionSets.districts.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>SCHOOL</div>
+            <select
+              value={schoolFilter}
+              onChange={e => setSchoolFilter(e.target.value)}
+              style={{
+                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            >
+              <option value="">All</option>
+              {optionSets.schools.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+        {reportError && (
+          <div style={{
+            marginTop: 10,
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid #7f1d1d",
+            background: "#7f1d1d22",
+            color: "#fecaca",
+            fontSize: 12
+          }}>
+            {reportError}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+          <button
+            onClick={downloadReport}
+            disabled={downloading}
+            style={{
+              background: downloading ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
+              color: downloading ? "#475569" : "#0f172a",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 900,
+              cursor: downloading ? "not-allowed" : "pointer",
+            }}
+          >
+            {downloading ? "Generating..." : "Download Report"}
+          </button>
+        </div>
+      </div>
+
       <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9", marginBottom: 20 }}>Reports & Trends</div>
 
       {/* Filters */}
@@ -1059,6 +1312,8 @@ function PageInner() {
     observerName: "",
     grade: "",
     totalStudents: "",
+    selectedDistrict: "",
+    customDistrict: "",
     schoolName: "",
     isFirstVisit: undefined,
   });
@@ -1112,6 +1367,11 @@ function PageInner() {
     if (!newVisitForm.grade) return;
     if (isFirstVisitFromUrl === undefined) return;
     if (isFirstVisitFromUrl === false && !implementationStatus) return;
+    if (!newVisitForm.selectedDistrict) return;
+    const districtValue =
+      newVisitForm.selectedDistrict === "Other" ? newVisitForm.customDistrict.trim() : newVisitForm.selectedDistrict;
+    if (newVisitForm.selectedDistrict === "Other" && !districtValue) return;
+    if (!newVisitForm.schoolName.trim()) return;
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
@@ -1133,6 +1393,7 @@ function PageInner() {
       subjectName: newVisitForm.subjectName.trim(),
       observerName: newVisitForm.observerName.trim(),
       grade: newVisitForm.grade,
+      district: districtValue,
       schoolName: newVisitForm.schoolName.trim(),
       totalStudents: newVisitForm.type === "classroom" ? (parseInt(newVisitForm.totalStudents) || null) : null,
       startTime: Date.now(),
@@ -1156,6 +1417,7 @@ function PageInner() {
         subject_name: completedVisit.subjectName,
         observer_name: completedVisit.observerName,
         type: completedVisit.type ?? "",
+        district: completedVisit.district ?? "",
         school_name: completedVisit.schoolName ?? "",
         grade: completedVisit.grade ?? "",
         total_students: completedVisit.totalStudents ?? 0,
@@ -1172,7 +1434,7 @@ function PageInner() {
       };
 
       let insertResult = await supabase.from("visits").insert([visitObject]).select();
-      if (insertResult.error && /is_first_visit/i.test(insertResult.error.message || "")) {
+      if (insertResult.error && /(is_first_visit|district)/i.test(insertResult.error.message || "")) {
         insertResult = await supabase.from("visits").insert([visitObjectBase as any]).select();
       }
 
@@ -1195,6 +1457,8 @@ function PageInner() {
       observerName: "",
       grade: "",
       totalStudents: "",
+      selectedDistrict: "",
+      customDistrict: "",
       schoolName: "",
       isFirstVisit: undefined,
     });
@@ -1239,16 +1503,21 @@ function PageInner() {
         alignItems: "center", position: "sticky", top: 0, zIndex: 50
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 8,
-            background: "linear-gradient(135deg, #38bdf8, #818cf8)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 16
-          }}>IO</div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#f1f5f9", lineHeight: 1 }}>InMind Observer</div>
-            <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1 }}>Behavior Tracking</div>
-          </div>
+          <Link href="/" className="flex items-center gap-2" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Image
+              src="/logo.png"
+              alt="InMind Observer Logo"
+              width={36}
+              height={36}
+              className="object-contain"
+              priority
+              style={{ objectFit: "contain" }}
+            />
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#f1f5f9", lineHeight: 1 }}>InMind Observer</div>
+              <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1 }}>Behavior Tracking</div>
+            </div>
+          </Link>
         </div>
         {screen === "active" && (
           <div style={{ fontSize: 12, color: "#f97316", fontWeight: 700, background: "#f9731622",
@@ -1382,16 +1651,82 @@ function PageInner() {
             </div>
 
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>SCHOOL NAME</div>
-              <input
-                value={newVisitForm.schoolName}
-                onChange={e => setNewVisitForm(p => ({ ...p, schoolName: e.target.value }))}
-                placeholder="e.g. Lincoln Elementary"
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DISTRICT</div>
+              <select
+                required
+                value={newVisitForm.selectedDistrict}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setNewVisitForm(p => ({
+                    ...p,
+                    selectedDistrict: next,
+                    schoolName: "",
+                    ...(next === "Other" ? {} : { customDistrict: "" }),
+                  }));
+                }}
                 style={{
                   width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
                   color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
                   fontFamily: "inherit"
-                }} />
+                }}
+              >
+                <option value="" disabled>Select...</option>
+                {DISTRICT_OPTIONS.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+
+            {newVisitForm.selectedDistrict === "Other" && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DISTRICT NAME</div>
+                <input
+                  required
+                  value={newVisitForm.customDistrict}
+                  onChange={e => setNewVisitForm(p => ({ ...p, customDistrict: e.target.value }))}
+                  placeholder="e.g. Boston Public Schools"
+                  style={{
+                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              </div>
+            )}
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+                SCHOOL NAME
+              </div>
+              {newVisitForm.selectedDistrict && newVisitForm.selectedDistrict !== "Other" ? (
+                <select
+                  required
+                  value={newVisitForm.schoolName}
+                  onChange={e => setNewVisitForm(p => ({ ...p, schoolName: e.target.value }))}
+                  style={{
+                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                >
+                  <option value="" disabled>Select...</option>
+                  {(districtSchoolMap[newVisitForm.selectedDistrict] || []).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  required={newVisitForm.selectedDistrict === "Other"}
+                  value={newVisitForm.schoolName}
+                  onChange={e => setNewVisitForm(p => ({ ...p, schoolName: e.target.value }))}
+                  placeholder="e.g. Lincoln Elementary"
+                  style={{
+                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              )}
             </div>
 
             {newVisitForm.type === "classroom" && (
@@ -1461,15 +1796,18 @@ function PageInner() {
                 !newVisitForm.subjectName.trim() ||
                 !newVisitForm.observerName.trim() ||
                 !newVisitForm.grade ||
+                !newVisitForm.selectedDistrict ||
+                (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) ||
+                !newVisitForm.schoolName.trim() ||
                 isFirstVisitFromUrl === undefined ||
                 (isFirstVisitFromUrl === false && !implementationStatus)
               }
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus))
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus))
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "not-allowed" : "pointer"
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "not-allowed" : "pointer"
               }}>Start Observation</button>
               </>
             )}
@@ -1506,6 +1844,8 @@ function PageInner() {
                     observerName: "",
                     grade: "",
                     totalStudents: "",
+                    selectedDistrict: "",
+                    customDistrict: "",
                     schoolName: "",
                     isFirstVisit: undefined,
                   });
