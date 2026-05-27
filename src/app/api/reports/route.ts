@@ -11,6 +11,8 @@ type ObservationRow = {
   behavior: string | null;
   duration: number | string | null;
   created_at: string | null;
+  observation_type?: string | null;
+  type?: string | null;
 };
 
 function requireEnv(name: "NEXT_PUBLIC_SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY") {
@@ -35,6 +37,7 @@ export async function GET(req: NextRequest) {
   const district = searchParams.get("district");
 
   let rows: ObservationRow[] = [];
+  let supportsObservationType = true;
   try {
     const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -42,27 +45,51 @@ export async function GET(req: NextRequest) {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    let query = supabase
-      .from("observations")
-      .select("id, student_name, teacher_name, school, district, behavior, duration, created_at")
-      .order("created_at", { ascending: false })
-      .limit(10000);
+    const selectWithType =
+      "id, student_name, teacher_name, school, district, behavior, duration, created_at, observation_type";
+    const selectWithoutType = "id, student_name, teacher_name, school, district, behavior, duration, created_at";
 
-    if (student) query = query.eq("student_name", student);
-    if (teacher) query = query.eq("teacher_name", teacher);
-    if (school) query = query.eq("school", school);
-    if (district) query = query.eq("district", district);
+    const buildQuery = (select: string) => {
+      let q = supabase
+        .from("observations")
+        .select(select)
+        .order("created_at", { ascending: false })
+        .limit(10000);
 
-    const { data, error } = await query;
+      if (student) q = q.eq("student_name", student);
+      if (teacher) q = q.eq("teacher_name", teacher);
+      if (school) q = q.eq("school", school);
+      if (district) q = q.eq("district", district);
+
+      return q;
+    };
+
+    let { data, error } = await buildQuery(selectWithType);
+    if (error && /observation_type/i.test(error.message || "")) {
+      supportsObservationType = false;
+      // Fall back for schemas that don't yet include observation_type.
+      ({ data, error } = await buildQuery(selectWithoutType));
+    }
+
     if (error) {
       console.error("Supabase reports query error:", error);
       return NextResponse.json({ ok: false, error: "Failed to fetch observations." }, { status: 500 });
     }
 
-    rows = (data || []) as ObservationRow[];
+    rows = (Array.isArray(data) ? data : []) as unknown as ObservationRow[];
   } catch (e) {
     console.error("Reports route error:", e);
     return NextResponse.json({ ok: false, error: "Server misconfiguration." }, { status: 500 });
+  }
+
+  // Reporting rule: FBA data is excluded from aggregated (school/district/teacher) reports.
+  // Only allow FBA results when the report is filtered by student *only*.
+  const includeFba = Boolean(student) && !teacher && !school && !district;
+  if (supportsObservationType && !includeFba) {
+    rows = rows.filter((r) => {
+      const t = (r.observation_type ?? r.type ?? "").toString().trim().toLowerCase();
+      return t !== "fba";
+    });
   }
 
   const workbook = new ExcelJS.Workbook();

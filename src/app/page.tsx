@@ -22,9 +22,11 @@ type Behavior = {
 
 type BehaviorType = "positive" | "challenging";
 
+type AbcEntry = { antecedent: string; behavior: string; consequence: string };
+
 type Visit = {
   id: string;
-  type: string;
+  type: "student" | "classroom" | "fba";
   subjectName: string;
   observerName: string;
   grade?: string;
@@ -36,6 +38,10 @@ type Visit = {
   endTime?: number | null;
   totalDuration?: number | null;
   behaviors?: Behavior[];
+  abcEntries?: AbcEntry[];
+  latencyRecords?: number[];
+  intervalLengthSec?: number | null;
+  intervalRecords?: boolean[];
   notes?: string;
   recommendations?: string;
   implementationStatus?: string;
@@ -50,7 +56,7 @@ type DataState = {
 };
 
 type NewVisitFormState = {
-  type: "student" | "classroom";
+  type: "student" | "classroom" | "fba";
   subjectName: string;
   observerName: string;
   grade: string;
@@ -539,7 +545,7 @@ function ActiveVisit({
             </div>
             <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>{visit.subjectName}</div>
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 2 }}>
-              {visit.type === "student" ? "Student" : "Classroom"} | {visit.observerName}
+              {visit.type === "student" ? "Student" : visit.type === "classroom" ? "Classroom" : "FBA"} | {visit.observerName}
             </div>
             {visit.schoolName && (
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 1 }}>School: {visit.schoolName}</div>
@@ -855,11 +861,443 @@ function ActiveVisit({
   );
 }
 
+function ActiveFbaVisit({
+  visit,
+  onComplete,
+}: {
+  visit: Visit;
+  onComplete: (completed: Visit) => void;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number>(visit.startTime);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [abcEntries, setAbcEntries] = useState<AbcEntry[]>(
+    visit.abcEntries && visit.abcEntries.length > 0
+      ? visit.abcEntries
+      : [
+        { antecedent: "", behavior: "", consequence: "" },
+        { antecedent: "", behavior: "", consequence: "" },
+        { antecedent: "", behavior: "", consequence: "" },
+      ]
+  );
+
+  const [latencyRecords, setLatencyRecords] = useState<number[]>(visit.latencyRecords || []);
+  const [latencyStartMs, setLatencyStartMs] = useState<number | null>(null);
+
+  const [intervalLengthSec, setIntervalLengthSec] = useState<number>(visit.intervalLengthSec || 10);
+  const [intervalRecords, setIntervalRecords] = useState<boolean[]>(visit.intervalRecords || []);
+  const [intervalRunning, setIntervalRunning] = useState(false);
+  const [intervalCountdown, setIntervalCountdown] = useState(intervalLengthSec);
+  const intervalTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [notes, setNotes] = useState(visit.notes || "");
+  const [recommendations, setRecommendations] = useState(visit.recommendations || "");
+
+  useEffect(() => {
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timerRef.current as any);
+  }, []);
+
+  useEffect(() => {
+    if (!intervalRunning) return;
+    intervalTickRef.current = setInterval(() => {
+      setIntervalCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(intervalTickRef.current as any);
+  }, [intervalRunning]);
+
+  useEffect(() => {
+    if (!intervalRunning) return;
+    if (intervalCountdown !== 0) return;
+    // Stop ticking at 0 until user records Yes/No.
+    setIntervalRunning(false);
+  }, [intervalCountdown, intervalRunning]);
+
+  const addAbcEntry = () => {
+    setAbcEntries((prev) => {
+      if (prev.length >= 6) return prev;
+      return [...prev, { antecedent: "", behavior: "", consequence: "" }];
+    });
+  };
+
+  const updateAbcEntry = (idx: number, patch: Partial<AbcEntry>) => {
+    setAbcEntries((prev) => prev.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  };
+
+  const removeAbcEntry = (idx: number) => {
+    setAbcEntries((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const startLatency = () => {
+    if (latencyStartMs != null) return;
+    setLatencyStartMs(Date.now());
+  };
+
+  const stopLatency = () => {
+    if (latencyStartMs == null) return;
+    const sec = Math.max(0, Math.round((Date.now() - latencyStartMs) / 1000));
+    setLatencyRecords((prev) => [...prev, sec]);
+    setLatencyStartMs(null);
+  };
+
+  const startIntervals = () => {
+    const len = Math.max(1, Math.floor(intervalLengthSec || 10));
+    setIntervalLengthSec(len);
+    setIntervalCountdown(len);
+    setIntervalRunning(true);
+  };
+
+  const recordInterval = (val: boolean) => {
+    const len = Math.max(1, Math.floor(intervalLengthSec || 10));
+    setIntervalRecords((prev) => [...prev, val]);
+    setIntervalCountdown(len);
+    setIntervalRunning(true);
+  };
+
+  const handleComplete = () => {
+    onComplete({
+      ...visit,
+      abcEntries,
+      latencyRecords,
+      intervalLengthSec,
+      intervalRecords,
+      notes,
+      recommendations,
+      endTime: Date.now(),
+      totalDuration: elapsed,
+    });
+  };
+
+  return (
+    <div style={{ maxWidth: 680, margin: "0 auto", padding: "0 0 80px" }}>
+      <div style={{
+        background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+        borderRadius: 16, padding: "20px 24px", marginBottom: 20,
+        border: "1px solid #334155",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700, letterSpacing: "0.08em" }}>
+              FBA OBSERVATION
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: "#f1f5f9", marginTop: 6 }}>
+              {visit.subjectName}
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
+              {visit.district ? `District: ${visit.district}` : ""}
+              {visit.schoolName ? ` | School: ${visit.schoolName}` : ""}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>ELAPSED</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: "#38bdf8", fontVariantNumeric: "tabular-nums" }}>
+              {fmtTime(elapsed)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Student Info */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 10 }}>
+          STUDENT INFO
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>STUDENT</div>
+            <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 800, marginTop: 4 }}>{visit.subjectName}</div>
+          </div>
+          <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>OBSERVER</div>
+            <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 800, marginTop: 4 }}>{visit.observerName}</div>
+          </div>
+          <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>GRADE</div>
+            <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 800, marginTop: 4 }}>{visit.grade || "-"}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ABC Recording */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>
+            ABC RECORDING ({abcEntries.length}/6)
+          </div>
+          <button
+            onClick={addAbcEntry}
+            disabled={abcEntries.length >= 6}
+            style={{
+              background: abcEntries.length >= 6 ? "#0f172a" : "#38bdf8",
+              color: abcEntries.length >= 6 ? "#475569" : "#0f172a",
+              border: "none",
+              borderRadius: 8,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 900,
+              cursor: abcEntries.length >= 6 ? "not-allowed" : "pointer",
+            }}
+          >
+            Add Entry
+          </button>
+        </div>
+
+        {abcEntries.map((e, idx) => (
+          <div key={idx} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 12, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, color: "#64748b", fontWeight: 800 }}>ENTRY {idx + 1}</div>
+              {abcEntries.length > 1 && (
+                <button
+                  onClick={() => removeAbcEntry(idx)}
+                  style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12 }}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800, marginBottom: 4 }}>ANTECEDENT</div>
+                <input
+                  value={e.antecedent}
+                  onChange={(ev) => updateAbcEntry(idx, { antecedent: ev.target.value })}
+                  placeholder="What happened right before?"
+                  style={{
+                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800, marginBottom: 4 }}>BEHAVIOR</div>
+                <input
+                  value={e.behavior}
+                  onChange={(ev) => updateAbcEntry(idx, { behavior: ev.target.value })}
+                  placeholder="What did the student do?"
+                  style={{
+                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800, marginBottom: 4 }}>CONSEQUENCE</div>
+                <input
+                  value={e.consequence}
+                  onChange={(ev) => updateAbcEntry(idx, { consequence: ev.target.value })}
+                  placeholder="What happened right after?"
+                  style={{
+                    width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Latency */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
+          LATENCY
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            onClick={startLatency}
+            disabled={latencyStartMs != null}
+            style={{
+              background: latencyStartMs != null ? "#0f172a" : "#38bdf8",
+              color: latencyStartMs != null ? "#475569" : "#0f172a",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 900,
+              cursor: latencyStartMs != null ? "not-allowed" : "pointer",
+            }}
+          >
+            Start Request
+          </button>
+          <button
+            onClick={stopLatency}
+            disabled={latencyStartMs == null}
+            style={{
+              background: latencyStartMs == null ? "#0f172a" : "linear-gradient(135deg, #34d399, #6ee7b7)",
+              color: latencyStartMs == null ? "#475569" : "#0f172a",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 900,
+              cursor: latencyStartMs == null ? "not-allowed" : "pointer",
+            }}
+          >
+            Stop (Compliance)
+          </button>
+          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+            {latencyStartMs != null ? "Timing..." : "Ready"}
+          </div>
+        </div>
+        {latencyRecords.length > 0 && (
+          <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {latencyRecords.map((s, i) => (
+              <span key={i} style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: "#0f172a",
+                border: "1px solid #334155",
+                fontSize: 12,
+                color: "#e2e8f0",
+                fontVariantNumeric: "tabular-nums"
+              }}>
+                {s}s
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Interval Tracking */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
+          INTERVAL TRACKING
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800, marginBottom: 4 }}>INTERVAL (SECONDS)</div>
+            <input
+              type="number"
+              min={1}
+              value={intervalLengthSec}
+              onChange={(e) => {
+                const n = Math.max(1, parseInt(e.target.value || "10", 10));
+                setIntervalLengthSec(n);
+                if (!intervalRunning) setIntervalCountdown(n);
+              }}
+              style={{
+                width: 140, background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            />
+          </div>
+          <button
+            onClick={startIntervals}
+            style={{
+              background: "linear-gradient(135deg, #6366f1, #818cf8)",
+              color: "white",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 900,
+              cursor: "pointer",
+              marginTop: 16
+            }}
+          >
+            Start Interval
+          </button>
+          <div style={{ marginTop: 16, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
+            Countdown: {intervalCountdown}s
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          {intervalCountdown === 0 ? (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 800 }}>Record Behavior Occurring?</div>
+              <button onClick={() => recordInterval(true)} style={{
+                background: "#4ade80",
+                color: "#0f172a",
+                border: "none",
+                borderRadius: 10,
+                padding: "8px 14px",
+                fontSize: 13,
+                fontWeight: 900,
+                cursor: "pointer"
+              }}>Yes</button>
+              <button onClick={() => recordInterval(false)} style={{
+                background: "#f87171",
+                color: "#0f172a",
+                border: "none",
+                borderRadius: 10,
+                padding: "8px 14px",
+                fontSize: 13,
+                fontWeight: 900,
+                cursor: "pointer"
+              }}>No</button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#64748b" }}>
+              Recording prompt appears at the end of each interval.
+            </div>
+          )}
+        </div>
+        {intervalRecords.length > 0 && (
+          <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {intervalRecords.map((v, i) => (
+              <span key={i} style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: v ? "#4ade8011" : "#f8717111",
+                border: `1px solid ${v ? "#4ade8044" : "#f8717144"}`,
+                fontSize: 12,
+                color: "#e2e8f0",
+              }}>
+                {v ? "Yes" : "No"}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Notes & Recommendations */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>OBSERVATION NOTES</div>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Contextual notes..."
+            style={{
+              width: "100%", background: "#1e293b", border: "1px solid #334155",
+              borderRadius: 10, color: "#e2e8f0", padding: "10px 14px", fontSize: 13,
+              resize: "none", boxSizing: "border-box", fontFamily: "inherit"
+            }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>RECOMMENDATIONS</div>
+          <textarea value={recommendations} onChange={e => setRecommendations(e.target.value)} rows={3} placeholder="Interventions or recommendations..."
+            style={{
+              width: "100%", background: "#1e293b", border: "1px solid #334155",
+              borderRadius: 10, color: "#e2e8f0", padding: "10px 14px", fontSize: 13,
+              resize: "none", boxSizing: "border-box", fontFamily: "inherit"
+            }} />
+        </div>
+      </div>
+
+      <button onClick={handleComplete} style={{
+        width: "100%", background: "linear-gradient(135deg, #38bdf8, #818cf8)",
+        color: "#0f172a", border: "none", borderRadius: 14, padding: "16px",
+        fontSize: 15, fontWeight: 900, cursor: "pointer"
+      }}>
+        Complete FBA ({fmtTime(elapsed)})
+      </button>
+    </div>
+  );
+}
+
 // --- Visit Summary Card ---
 function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
   const implColor = visit.implementationStatus === "fully" ? "#4ade80"
     : visit.implementationStatus === "partially" ? "#facc15"
     : visit.implementationStatus === "not" ? "#f87171" : null;
+
+  const typeLabel = visit.type === "student" ? "Student" : visit.type === "classroom" ? "Classroom" : "FBA";
+  const typeColor = visit.type === "student" ? "#818cf8" : visit.type === "classroom" ? "#f59e0b" : "#34d399";
 
   return (
     <div onClick={onClick} style={{
@@ -878,8 +1316,8 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
           {visit.schoolName && <div style={{ fontSize: 11, color: "#475569", marginTop: 1 }}>School: {visit.schoolName}</div>}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <Badge color={visit.type === "student" ? "#818cf8" : "#f59e0b"}>
-            {visit.type === "student" ? "Student" : "Classroom"}
+          <Badge color={typeColor}>
+            {typeLabel}
           </Badge>
           {implColor && <Badge color={implColor}>{visit.implementationStatus}</Badge>}
         </div>
@@ -994,6 +1432,9 @@ function Reports({ visits }: { visits: Visit[] }) {
   const [downloading, setDownloading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
+  // FBA observations are excluded from aggregated reports (school/district/teacher trends).
+  const reportableVisits = useMemo(() => visits.filter((v) => v.type !== "fba"), [visits]);
+
   const optionSets = useMemo(() => {
     const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
     const unique = (vals: string[]) => {
@@ -1012,7 +1453,7 @@ function Reports({ visits }: { visits: Visit[] }) {
     const schools: string[] = [];
     const districts: string[] = [];
 
-    for (const v of visits) {
+    for (const v of reportableVisits) {
       if (v.type === "student") students.push(v.subjectName);
       if (v.type === "classroom") teachers.push(v.subjectName);
       if (v.schoolName) schools.push(v.schoolName);
@@ -1025,7 +1466,7 @@ function Reports({ visits }: { visits: Visit[] }) {
       schools: unique(schools),
       districts: unique(districts),
     };
-  }, [visits]);
+  }, [reportableVisits]);
 
   const downloadReport = async () => {
     setDownloading(true);
@@ -1063,8 +1504,8 @@ function Reports({ visits }: { visits: Visit[] }) {
     }
   };
 
-  const subjects = [...new Set(visits.map(v => v.subjectName))].sort();
-  const filtered = visits.filter(v =>
+  const subjects = [...new Set(reportableVisits.map(v => v.subjectName))].sort();
+  const filtered = reportableVisits.filter(v =>
     (filter === "all" || v.type === filter) &&
     (selectedSubject === "all" || v.subjectName === selectedSubject)
   ).sort((a, b) => b.startTime - a.startTime);
@@ -1346,8 +1787,18 @@ function PageInner() {
 
         return {
           ...v,
+          type: (v.observation_type ?? v.type ?? "student") as Visit["type"],
           subjectName: v.subject_name ?? v.subjectName,
           observerName: v.observer_name ?? v.observerName,
+          isFirstVisit: v.is_first_visit ?? v.isFirstVisit,
+          implementationStatus: v.implementation_status ?? v.implementationStatus,
+          district: v.district ?? v.districtName,
+          schoolName: v.school_name ?? v.schoolName,
+          totalStudents: v.total_students ?? v.totalStudents,
+          abcEntries: v.abc_entries ?? v.abcEntries,
+          latencyRecords: v.latency_records ?? v.latencyRecords,
+          intervalRecords: v.interval_records ?? v.intervalRecords,
+          intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
           startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
           endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
           totalDuration: v.total_duration ?? v.totalDuration,
@@ -1366,7 +1817,7 @@ function PageInner() {
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
     if (!newVisitForm.grade) return;
     if (isFirstVisitFromUrl === undefined) return;
-    if (isFirstVisitFromUrl === false && !implementationStatus) return;
+    if (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus) return;
     if (!newVisitForm.selectedDistrict) return;
     const districtValue =
       newVisitForm.selectedDistrict === "Other" ? newVisitForm.customDistrict.trim() : newVisitForm.selectedDistrict;
@@ -1378,14 +1829,17 @@ function PageInner() {
       v.subjectName.toLowerCase() === newVisitForm.subjectName.toLowerCase() && v.type === newVisitForm.type
     ).sort((a, b) => b.startTime - a.startTime);
 
-    const prevBehaviors = prevVisits.length > 0
-      ? (() => {
-        const allowedBehaviorIds = new Set(BEHAVIOR_LIBRARY[newVisitForm.type].map(b => b.id));
-        return (prevVisits[0].behaviors || [])
-          .filter(b => allowedBehaviorIds.has(b.id))
-          .map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }));
-      })()
-      : [];
+    const prevBehaviors =
+      newVisitForm.type === "fba"
+        ? []
+        : prevVisits.length > 0
+          ? (() => {
+            const allowedBehaviorIds = new Set(BEHAVIOR_LIBRARY[newVisitForm.type].map(b => b.id));
+            return (prevVisits[0].behaviors || [])
+              .filter(b => allowedBehaviorIds.has(b.id))
+              .map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }));
+          })()
+          : [];
 
     const visit: Visit = {
       id: uid(),
@@ -1399,7 +1853,7 @@ function PageInner() {
       startTime: Date.now(),
       behaviors: prevBehaviors,
       isFirstVisit: isFirstVisitFromUrl,
-      implementationStatus: isFirstVisitFromUrl === false ? implementationStatus : undefined,
+      implementationStatus: newVisitForm.type !== "fba" && isFirstVisitFromUrl === false ? implementationStatus : undefined,
       prevVisit: prevVisits[0] || null
     } as any;
     setActiveVisit(visit);
@@ -1429,12 +1883,29 @@ function PageInner() {
 
       const visitObject = {
         ...visitObjectBase,
+        // For forward compatibility with schemas that store the observation type separately.
+        ...(completedVisit.type ? { observation_type: completedVisit.type } : {}),
         ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
-        ...(completedVisit.isFirstVisit === false ? { implementation_status: completedVisit.implementationStatus ?? implementationStatus } : {}),
+        ...(completedVisit.type !== "fba" && completedVisit.isFirstVisit === false
+          ? { implementation_status: completedVisit.implementationStatus ?? implementationStatus }
+          : {}),
+        ...(completedVisit.type === "fba"
+          ? {
+            abc_entries: completedVisit.abcEntries ?? [],
+            latency_records: completedVisit.latencyRecords ?? [],
+            interval_records: completedVisit.intervalRecords ?? [],
+            interval_length_sec: completedVisit.intervalLengthSec ?? null,
+          }
+          : {}),
       };
 
       let insertResult = await supabase.from("visits").insert([visitObject]).select();
-      if (insertResult.error && /(is_first_visit|district)/i.test(insertResult.error.message || "")) {
+      if (
+        insertResult.error &&
+        /(is_first_visit|district|implementation_status|observation_type|abc_entries|latency_records|interval_records|interval_length_sec)/i.test(
+          insertResult.error.message || ""
+        )
+      ) {
         insertResult = await supabase.from("visits").insert([visitObjectBase as any]).select();
       }
 
@@ -1471,7 +1942,11 @@ function PageInner() {
     const keyFor = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
     const byKey = new Map<string, string>();
     for (const v of allVisits) {
-      if (v.type !== newVisitForm.type) continue;
+      const isEligible =
+        newVisitForm.type === "fba"
+          ? v.type === "student" || v.type === "fba"
+          : v.type === newVisitForm.type;
+      if (!isEligible) continue;
       const raw = (v.subjectName || "").trim();
       if (!raw) continue;
       const k = keyFor(raw);
@@ -1532,11 +2007,15 @@ function PageInner() {
 
         {/* Active visit */}
         {screen === "active" && activeVisit && (
-          <ActiveVisit
-            visit={activeVisit}
-            prevVisit={activeVisit.prevVisit}
-            onComplete={completeVisit}
-          />
+          activeVisit.type === "fba" ? (
+            <ActiveFbaVisit visit={activeVisit} onComplete={completeVisit} />
+          ) : (
+            <ActiveVisit
+              visit={activeVisit}
+              prevVisit={activeVisit.prevVisit}
+              onComplete={completeVisit}
+            />
+          )
         )}
 
         {/* New visit form */}
@@ -1581,23 +2060,36 @@ function PageInner() {
                 />
 
                 <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {(["student", "classroom"] as const).map(t => (
-                <button key={t} onClick={() => setNewVisitForm(p => ({
-                  ...p,
-                  type: t,
-                  ...(isFirstVisitFromUrl === false ? { subjectName: "" } : {})
-                }))} style={{
+              {(["student", "classroom", "fba"] as const).map(t => (
+                <button
+                  key={t}
+                  onClick={() => {
+                    setImplementationStatus("");
+                    setNewVisitForm(p => ({
+                      ...p,
+                      type: t,
+                      ...(isFirstVisitFromUrl === false ? { subjectName: "" } : {})
+                    }));
+                  }}
+                  style={{
                   flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700,
                   border: `2px solid ${newVisitForm.type === t ? "#38bdf8" : "#334155"}`,
                   background: newVisitForm.type === t ? "#38bdf822" : "#1e293b",
                   color: newVisitForm.type === t ? "#38bdf8" : "#64748b", cursor: "pointer",
                   textTransform: "capitalize"
-                }}>{t === "student" ? "Student" : "Classroom"}</button>
+                }}
+                >
+                  {t === "student" ? "Student" : t === "classroom" ? "Classroom" : "FBA"}
+                </button>
               ))}
                 </div>
 
             {([
-              { key: "subjectName" as const, label: newVisitForm.type === "student" ? "Student Name" : "Classroom / Teacher", placeholder: newVisitForm.type === "student" ? "e.g. Alex M." : "e.g. Ms. Johnson - Room 12" },
+              {
+                key: "subjectName" as const,
+                label: newVisitForm.type === "classroom" ? "Classroom / Teacher" : "Student Name",
+                placeholder: newVisitForm.type === "classroom" ? "e.g. Ms. Johnson - Room 12" : "e.g. Alex M.",
+              },
               { key: "observerName" as const, label: "Observer Name", placeholder: "Your name" },
             ] as const).map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
@@ -1748,7 +2240,7 @@ function PageInner() {
               </div>
             )}
 
-            {isFirstVisitFromUrl === false && (
+            {isFirstVisitFromUrl === false && newVisitForm.type !== "fba" && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
                   Did the teacher implement previous feedback/interventions?
@@ -1781,11 +2273,13 @@ function PageInner() {
                   border: "1px solid #38bdf844"
                 }}>
                   <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
-                    OK: {prior.length} prior visit{prior.length !== 1 ? "s" : ""} found
+                    OK: {prior.length} prior {newVisitForm.type === "fba" ? "FBA " : ""}visit{prior.length !== 1 ? "s" : ""} found
                   </div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
-                    Previous behaviors will be pre-loaded. Last visit: {dateStr(prior[0].startTime)}
-                    {prior[0].recommendations && " | Has recommendations for follow-up"}
+                    {newVisitForm.type === "fba"
+                      ? `Last FBA: ${dateStr(prior[0].startTime)}`
+                      : `Previous behaviors will be pre-loaded. Last visit: ${dateStr(prior[0].startTime)}`}
+                    {newVisitForm.type !== "fba" && prior[0].recommendations && " | Has recommendations for follow-up"}
                   </div>
                 </div>
               ) : null;
@@ -1800,14 +2294,14 @@ function PageInner() {
                 (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) ||
                 !newVisitForm.schoolName.trim() ||
                 isFirstVisitFromUrl === undefined ||
-                (isFirstVisitFromUrl === false && !implementationStatus)
+                (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus)
               }
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus))
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus))
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus)) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (isFirstVisitFromUrl === false && !implementationStatus)) ? "not-allowed" : "pointer"
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus)) ? "not-allowed" : "pointer"
               }}>Start Observation</button>
               </>
             )}
