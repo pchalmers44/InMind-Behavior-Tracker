@@ -24,6 +24,29 @@ type BehaviorType = "positive" | "challenging";
 
 type AbcEntry = { antecedent: string; behavior: string; consequence: string };
 
+type FbaLatencyEvent = {
+  behaviorId: string | null;
+  behaviorLabel: string;
+  startTime: number;
+  stopTime: number;
+  latencySec: number;
+  timestamp: number; // record created at
+};
+
+type FbaIntervalRecord = {
+  intervalNumber: number;
+  behaviorPresent: boolean;
+  timestamp: number;
+};
+
+type FbaIntervalSession = {
+  behaviorId: string | null;
+  behaviorLabel: string;
+  intervalLengthSec: number;
+  records: FbaIntervalRecord[];
+  startedAt: number;
+};
+
 type Visit = {
   id: string;
   type: "student" | "classroom" | "fba";
@@ -40,8 +63,10 @@ type Visit = {
   behaviors?: Behavior[];
   abcEntries?: AbcEntry[];
   latencyRecords?: number[];
+  fbaLatencyEvents?: FbaLatencyEvent[];
   intervalLengthSec?: number | null;
   intervalRecords?: boolean[];
+  fbaIntervalSessions?: FbaIntervalSession[];
   notes?: string;
   recommendations?: string;
   implementationStatus?: string;
@@ -446,6 +471,22 @@ function ActiveVisit({
       setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
     }, 1000);
     return () => clearInterval(timerRef.current as any);
+  }, []);
+
+  // Duration timer tick (FBA behaviors)
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDurationTimers((prev) => {
+        const next = { ...prev };
+        Object.keys(activeTimers.current).forEach((bid) => {
+          if (activeTimers.current[bid]) {
+            next[bid] = (next[bid] || 0) + 1;
+          }
+        });
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
   }, []);
 
   // Duration timer tick
@@ -872,6 +913,24 @@ function ActiveFbaVisit({
   const startRef = useRef<number>(visit.startTime);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [behaviors, setBehaviors] = useState<Behavior[]>(visit.behaviors || []);
+  const [durationTimers, setDurationTimers] = useState<Record<string, number>>({});
+  const activeTimers = useRef<Record<string, boolean>>({});
+
+  const [showAddBehavior, setShowAddBehavior] = useState(false);
+  const [customBehavior, setCustomBehavior] = useState<{ label: string; type: string; behaviorType?: BehaviorType }>({
+    label: "",
+    type: "frequency",
+    behaviorType: undefined,
+  });
+
+  const [selectedFrequencyBehaviorId, setSelectedFrequencyBehaviorId] = useState<string>("");
+  const [selectedDurationBehaviorId, setSelectedDurationBehaviorId] = useState<string>("");
+  const [selectedLatencyBehaviorId, setSelectedLatencyBehaviorId] = useState<string>("");
+  const [latencyOtherBehaviorLabel, setLatencyOtherBehaviorLabel] = useState<string>("");
+  const [selectedIntervalBehaviorId, setSelectedIntervalBehaviorId] = useState<string>("");
+  const [intervalOtherBehaviorLabel, setIntervalOtherBehaviorLabel] = useState<string>("");
+
   const [abcEntries, setAbcEntries] = useState<AbcEntry[]>(
     visit.abcEntries && visit.abcEntries.length > 0
       ? visit.abcEntries
@@ -883,10 +942,14 @@ function ActiveFbaVisit({
   );
 
   const [latencyRecords, setLatencyRecords] = useState<number[]>(visit.latencyRecords || []);
+  const [fbaLatencyEvents, setFbaLatencyEvents] = useState<FbaLatencyEvent[]>(visit.fbaLatencyEvents || []);
   const [latencyStartMs, setLatencyStartMs] = useState<number | null>(null);
+  const [latencyStartMeta, setLatencyStartMeta] = useState<{ startTime: number; behaviorId: string | null; behaviorLabel: string } | null>(null);
 
   const [intervalLengthSec, setIntervalLengthSec] = useState<number>(visit.intervalLengthSec || 10);
   const [intervalRecords, setIntervalRecords] = useState<boolean[]>(visit.intervalRecords || []);
+  const [fbaIntervalSessions, setFbaIntervalSessions] = useState<FbaIntervalSession[]>(visit.fbaIntervalSessions || []);
+  const [intervalRecordEvents, setIntervalRecordEvents] = useState<FbaIntervalRecord[]>([]);
   const [intervalRunning, setIntervalRunning] = useState(false);
   const [intervalCountdown, setIntervalCountdown] = useState(intervalLengthSec);
   const intervalTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -931,19 +994,99 @@ function ActiveFbaVisit({
     setAbcEntries((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  const studentLib = BEHAVIOR_LIBRARY.student as Behavior[];
+  const availableLib = studentLib.filter((b) => !behaviors.find((bb) => bb.id === b.id));
+  const frequencyBehaviors = behaviors.filter((b) => b.type === "frequency");
+  const durationBehaviors = behaviors.filter((b) => b.type === "duration");
+
+  const addBehaviorFromLibrary = (bDef: Behavior) => {
+    if (!behaviors.find((b) => b.id === bDef.id)) {
+      setBehaviors((prev) => [...prev, { ...bDef, count: 0, intensity: null }]);
+    }
+    setShowAddBehavior(false);
+  };
+
+  const addCustomBehavior = () => {
+    if (!customBehavior.label.trim()) return;
+    if (!customBehavior.behaviorType) return;
+    const nb: Behavior = {
+      id: uid(),
+      label: customBehavior.label,
+      type: customBehavior.type,
+      category: customBehavior.behaviorType,
+      count: 0,
+      intensity: null,
+      custom: true,
+    };
+    setBehaviors((prev) => [...prev, nb]);
+    setCustomBehavior({ label: "", type: "frequency", behaviorType: undefined });
+    setShowAddBehavior(false);
+  };
+
+  const removeBehavior = (bid: string) => {
+    setBehaviors((prev) => prev.filter((b) => b.id !== bid));
+    delete activeTimers.current[bid];
+    setDurationTimers((prev) => {
+      const next = { ...prev };
+      delete next[bid];
+      return next;
+    });
+    if (selectedFrequencyBehaviorId === bid) setSelectedFrequencyBehaviorId("");
+    if (selectedDurationBehaviorId === bid) setSelectedDurationBehaviorId("");
+    if (selectedLatencyBehaviorId === bid) setSelectedLatencyBehaviorId("");
+    if (selectedIntervalBehaviorId === bid) setSelectedIntervalBehaviorId("");
+  };
+
+  const recordFrequencySelected = () => {
+    if (!selectedFrequencyBehaviorId) return;
+    setBehaviors((prev) =>
+      prev.map((b) => (b.id === selectedFrequencyBehaviorId ? { ...b, count: (b.count || 0) + 1 } : b))
+    );
+  };
+
+  const toggleDurationSelected = () => {
+    if (!selectedDurationBehaviorId) return;
+    activeTimers.current[selectedDurationBehaviorId] = !activeTimers.current[selectedDurationBehaviorId];
+    setDurationTimers((prev) => ({ ...prev })); // force re-render
+  };
+
   const startLatency = () => {
+    if (!selectedLatencyBehaviorId) return;
+    if (selectedLatencyBehaviorId === "__other__" && !latencyOtherBehaviorLabel.trim()) return;
     if (latencyStartMs != null) return;
-    setLatencyStartMs(Date.now());
+    const now = Date.now();
+    const behaviorId = selectedLatencyBehaviorId === "__other__" ? null : selectedLatencyBehaviorId;
+    const behaviorLabel =
+      selectedLatencyBehaviorId === "__other__"
+        ? latencyOtherBehaviorLabel.trim()
+        : behaviors.find((x) => x.id === selectedLatencyBehaviorId)?.label || "Unknown";
+    setLatencyStartMs(now);
+    setLatencyStartMeta({ startTime: now, behaviorId, behaviorLabel });
   };
 
   const stopLatency = () => {
     if (latencyStartMs == null) return;
-    const sec = Math.max(0, Math.round((Date.now() - latencyStartMs) / 1000));
+    const stop = Date.now();
+    const sec = Math.max(0, Math.round((stop - latencyStartMs) / 1000));
     setLatencyRecords((prev) => [...prev, sec]);
+    setFbaLatencyEvents((prev) => [
+      ...prev,
+      {
+        behaviorId: latencyStartMeta?.behaviorId ?? null,
+        behaviorLabel: latencyStartMeta?.behaviorLabel ?? "Unknown",
+        startTime: latencyStartMeta?.startTime ?? latencyStartMs,
+        stopTime: stop,
+        latencySec: sec,
+        timestamp: Date.now(),
+      },
+    ]);
     setLatencyStartMs(null);
+    setLatencyStartMeta(null);
   };
 
   const startIntervals = () => {
+    if (!selectedIntervalBehaviorId) return;
+    if (selectedIntervalBehaviorId === "__other__" && !intervalOtherBehaviorLabel.trim()) return;
     const len = Math.max(1, Math.floor(intervalLengthSec || 10));
     setIntervalLengthSec(len);
     setIntervalCountdown(len);
@@ -951,19 +1094,53 @@ function ActiveFbaVisit({
   };
 
   const recordInterval = (val: boolean) => {
+    if (!selectedIntervalBehaviorId) return;
+    if (selectedIntervalBehaviorId === "__other__" && !intervalOtherBehaviorLabel.trim()) return;
     const len = Math.max(1, Math.floor(intervalLengthSec || 10));
-    setIntervalRecords((prev) => [...prev, val]);
+    const nextNumber = intervalRecordEvents.length + 1;
+    const evt: FbaIntervalRecord = { intervalNumber: nextNumber, behaviorPresent: val, timestamp: Date.now() };
+    setIntervalRecordEvents((prev) => [...prev, evt]);
+    setIntervalRecords((prev) => [...prev, val]); // legacy/compat
     setIntervalCountdown(len);
     setIntervalRunning(true);
   };
 
   const handleComplete = () => {
+    const finalBehaviors = behaviors.map((b) => ({
+      ...b,
+      durationSec: b.type === "duration" ? (durationTimers[b.id] || 0) : undefined,
+    }));
+
+    const intervalSessionsNext = (() => {
+      if (!selectedIntervalBehaviorId || intervalRecords.length === 0) return fbaIntervalSessions;
+      const behaviorId = selectedIntervalBehaviorId === "__other__" ? null : selectedIntervalBehaviorId;
+      const behaviorLabel =
+        selectedIntervalBehaviorId === "__other__"
+          ? intervalOtherBehaviorLabel.trim()
+          : behaviors.find((x) => x.id === selectedIntervalBehaviorId)?.label || "Unknown";
+      return [
+        ...fbaIntervalSessions,
+        {
+          behaviorId,
+          behaviorLabel,
+          intervalLengthSec: Math.max(1, Math.floor(intervalLengthSec || 10)),
+          records: intervalRecordEvents.length > 0
+            ? intervalRecordEvents
+            : intervalRecords.map((v, i) => ({ intervalNumber: i + 1, behaviorPresent: v, timestamp: Date.now() })),
+          startedAt: visit.startTime,
+        },
+      ];
+    })();
+
     onComplete({
       ...visit,
+      behaviors: finalBehaviors,
       abcEntries,
       latencyRecords,
+      fbaLatencyEvents,
       intervalLengthSec,
       intervalRecords,
+      fbaIntervalSessions: intervalSessionsNext,
       notes,
       recommendations,
       endTime: Date.now(),
@@ -1019,6 +1196,215 @@ function ActiveFbaVisit({
             <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 800, marginTop: 4 }}>{visit.grade || "-"}</div>
           </div>
         </div>
+      </div>
+
+      {/* Behavior Setup */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>
+            BEHAVIOR SETUP (STUDENT LIBRARY)
+          </div>
+          <button
+            onClick={() => setShowAddBehavior((v) => !v)}
+            style={{
+              background: showAddBehavior ? "#0f172a" : "#38bdf8",
+              color: showAddBehavior ? "#e2e8f0" : "#0f172a",
+              border: "none",
+              borderRadius: 10,
+              padding: "8px 12px",
+              fontSize: 12,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            {showAddBehavior ? "Close" : "+ Add Behavior"}
+          </button>
+        </div>
+
+        {behaviors.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#64748b" }}>
+            Add at least one behavior to enable Frequency/Duration/Latency/Interval tracking.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {behaviors.map((b) => (
+              <div
+                key={b.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 800, color: "#e2e8f0" }}>{b.label}</span>
+                <span style={{ fontSize: 11, color: "#64748b" }}>
+                  {b.category === "positive" ? "Positive" : b.category === "challenging" ? "Challenging" : "Unlabeled"} |{" "}
+                  {b.type === "frequency" ? "Frequency" : "Duration"}
+                </span>
+                <button
+                  onClick={() => removeBehavior(b.id)}
+                  style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12 }}
+                  aria-label={`Remove ${b.label}`}
+                  title="Remove"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {showAddBehavior && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+              <div style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 10 }}>POSITIVE (LIBRARY)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                  {availableLib.filter((b) => b.category === "positive").map((b) => (
+                    <button
+                      key={b.id}
+                      onClick={() => addBehaviorFromLibrary(b)}
+                      style={{
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "1px solid #334155",
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        cursor: "pointer",
+                        color: "#e2e8f0",
+                        fontSize: 13,
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {b.label} <span style={{ color: "#64748b", fontSize: 11 }}>({b.type})</span>
+                    </button>
+                  ))}
+                  {availableLib.filter((b) => b.category === "positive").length === 0 && (
+                    <div style={{ fontSize: 12, color: "#64748b" }}>No more positive behaviors.</div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 10 }}>CHALLENGING (LIBRARY)</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                  {availableLib.filter((b) => b.category === "challenging").map((b) => (
+                    <button
+                      key={b.id}
+                      onClick={() => addBehaviorFromLibrary(b)}
+                      style={{
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "1px solid #334155",
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        cursor: "pointer",
+                        color: "#e2e8f0",
+                        fontSize: 13,
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {b.label} <span style={{ color: "#64748b", fontSize: 11 }}>({b.type})</span>
+                    </button>
+                  ))}
+                  {availableLib.filter((b) => b.category === "challenging").length === 0 && (
+                    <div style={{ fontSize: 12, color: "#64748b" }}>No more challenging behaviors.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12, background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 10 }}>CUSTOM BEHAVIOR</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 10px", borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
+                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
+                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
+                }}>
+                  <input
+                    type="radio"
+                    name="fbaCustomBehaviorType"
+                    checked={customBehavior.behaviorType === "positive"}
+                    onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "positive" }))}
+                  />
+                  Positive
+                </label>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 10px", borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
+                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
+                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
+                }}>
+                  <input
+                    type="radio"
+                    name="fbaCustomBehaviorType"
+                    checked={customBehavior.behaviorType === "challenging"}
+                    onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "challenging" }))}
+                  />
+                  Challenging
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  value={customBehavior.label}
+                  onChange={(e) => setCustomBehavior((p) => ({ ...p, label: e.target.value }))}
+                  placeholder="Behavior name..."
+                  style={{
+                    flex: 1,
+                    minWidth: 160,
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 8,
+                    color: "#e2e8f0",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontFamily: "inherit",
+                  }}
+                />
+                <select
+                  value={customBehavior.type}
+                  onChange={(e) => setCustomBehavior((p) => ({ ...p, type: e.target.value }))}
+                  style={{
+                    background: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 8,
+                    color: "#e2e8f0",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <option value="frequency">Frequency</option>
+                  <option value="duration">Duration</option>
+                </select>
+                <button
+                  onClick={addCustomBehavior}
+                  style={{
+                    background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
+                    color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "8px 16px",
+                    fontWeight: 800,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                  disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ABC Recording */}
@@ -1103,24 +1489,230 @@ function ActiveFbaVisit({
         ))}
       </div>
 
-      {/* Latency */}
+      {/* Frequency Tracking */}
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
-          LATENCY
+          FREQUENCY TRACKING
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <button
-            onClick={startLatency}
-            disabled={latencyStartMs != null}
+          <select
+            value={selectedFrequencyBehaviorId}
+            onChange={(e) => setSelectedFrequencyBehaviorId(e.target.value)}
             style={{
-              background: latencyStartMs != null ? "#0f172a" : "#38bdf8",
-              color: latencyStartMs != null ? "#475569" : "#0f172a",
+              flex: 1,
+              minWidth: 220,
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 10,
+              color: "#e2e8f0",
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "inherit",
+            }}
+          >
+            <option value="">Select behavior...</option>
+            {frequencyBehaviors.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={recordFrequencySelected}
+            disabled={!selectedFrequencyBehaviorId}
+            style={{
+              background: !selectedFrequencyBehaviorId ? "#0f172a" : "#818cf8",
+              color: !selectedFrequencyBehaviorId ? "#475569" : "#0f172a",
               border: "none",
               borderRadius: 10,
               padding: "10px 14px",
               fontSize: 13,
               fontWeight: 900,
-              cursor: latencyStartMs != null ? "not-allowed" : "pointer",
+              cursor: !selectedFrequencyBehaviorId ? "not-allowed" : "pointer",
+            }}
+          >
+            Record +1
+          </button>
+        </div>
+        {frequencyBehaviors.length === 0 ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: "#64748b" }}>No frequency behaviors added yet.</div>
+        ) : (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {frequencyBehaviors.map((b) => (
+              <div key={b.id} style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: "#e2e8f0" }}>{b.label}</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                      {b.category === "positive" ? "Positive" : b.category === "challenging" ? "Challenging" : "Unlabeled"}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: "#818cf8", fontVariantNumeric: "tabular-nums" }}>
+                    {b.count || 0}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Duration Tracking */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
+          DURATION TRACKING
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select
+            value={selectedDurationBehaviorId}
+            onChange={(e) => setSelectedDurationBehaviorId(e.target.value)}
+            style={{
+              flex: 1,
+              minWidth: 220,
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 10,
+              color: "#e2e8f0",
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "inherit",
+            }}
+          >
+            <option value="">Select behavior...</option>
+            {durationBehaviors.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={toggleDurationSelected}
+            disabled={!selectedDurationBehaviorId}
+            style={{
+              background: !selectedDurationBehaviorId ? "#0f172a" : "linear-gradient(135deg, #34d399, #6ee7b7)",
+              color: !selectedDurationBehaviorId ? "#475569" : "#0f172a",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 900,
+              cursor: !selectedDurationBehaviorId ? "not-allowed" : "pointer",
+            }}
+          >
+            {selectedDurationBehaviorId && activeTimers.current[selectedDurationBehaviorId] ? "Stop" : "Start"}
+          </button>
+        </div>
+        {durationBehaviors.length === 0 ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: "#64748b" }}>No duration behaviors added yet.</div>
+        ) : (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {durationBehaviors.map((b) => (
+              <div key={b.id} style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: "#e2e8f0" }}>{b.label}</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                      {b.category === "positive" ? "Positive" : b.category === "challenging" ? "Challenging" : "Unlabeled"}
+                      {activeTimers.current[b.id] ? " | running" : ""}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: "#34d399", fontVariantNumeric: "tabular-nums" }}>
+                    {fmtDuration(durationTimers[b.id] || 0)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Latency */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
+          LATENCY TRACKING
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <select
+            value={selectedLatencyBehaviorId}
+            onChange={(e) => {
+              const next = e.target.value;
+              setSelectedLatencyBehaviorId(next);
+              setLatencyStartMs(null);
+              setLatencyStartMeta(null);
+              if (next !== "__other__") setLatencyOtherBehaviorLabel("");
+            }}
+            style={{
+              flex: 1,
+              minWidth: 220,
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 10,
+              color: "#e2e8f0",
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "inherit",
+            }}
+          >
+            <option value="">Select behavior...</option>
+            {behaviors.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+            <option value="__other__">Other</option>
+          </select>
+          {selectedLatencyBehaviorId === "__other__" && (
+            <input
+              value={latencyOtherBehaviorLabel}
+              onChange={(e) => setLatencyOtherBehaviorLabel(e.target.value)}
+              placeholder="Enter behavior..."
+              style={{
+                flex: 1,
+                minWidth: 180,
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 10,
+                color: "#e2e8f0",
+                padding: "10px 12px",
+                fontSize: 13,
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+              }}
+            />
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            onClick={startLatency}
+            disabled={
+              latencyStartMs != null ||
+              !selectedLatencyBehaviorId ||
+              (selectedLatencyBehaviorId === "__other__" && !latencyOtherBehaviorLabel.trim())
+            }
+            style={{
+              background:
+                latencyStartMs != null ||
+                  !selectedLatencyBehaviorId ||
+                  (selectedLatencyBehaviorId === "__other__" && !latencyOtherBehaviorLabel.trim())
+                  ? "#0f172a"
+                  : "#38bdf8",
+              color:
+                latencyStartMs != null ||
+                  !selectedLatencyBehaviorId ||
+                  (selectedLatencyBehaviorId === "__other__" && !latencyOtherBehaviorLabel.trim())
+                  ? "#475569"
+                  : "#0f172a",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontSize: 13,
+              fontWeight: 900,
+              cursor:
+                latencyStartMs != null ||
+                  !selectedLatencyBehaviorId ||
+                  (selectedLatencyBehaviorId === "__other__" && !latencyOtherBehaviorLabel.trim())
+                  ? "not-allowed"
+                  : "pointer",
             }}
           >
             Start Request
@@ -1145,21 +1737,35 @@ function ActiveFbaVisit({
             {latencyStartMs != null ? "Timing..." : "Ready"}
           </div>
         </div>
-        {latencyRecords.length > 0 && (
+        {(fbaLatencyEvents.length > 0 || latencyRecords.length > 0) && (
           <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {latencyRecords.map((s, i) => (
-              <span key={i} style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                background: "#0f172a",
-                border: "1px solid #334155",
-                fontSize: 12,
-                color: "#e2e8f0",
-                fontVariantNumeric: "tabular-nums"
-              }}>
-                {s}s
-              </span>
-            ))}
+                {fbaLatencyEvents.length > 0
+                  ? fbaLatencyEvents.map((evt, i) => (
+                    <span key={i} style={{
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                      fontSize: 12,
+                      color: "#e2e8f0",
+                      fontVariantNumeric: "tabular-nums"
+                    }}>
+                      {evt.behaviorLabel}: {evt.latencySec}s
+                    </span>
+                  ))
+                  : latencyRecords.map((s, i) => (
+                <span key={i} style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                  fontSize: 12,
+                  color: "#e2e8f0",
+                  fontVariantNumeric: "tabular-nums"
+                }}>
+                  Latency: {s}s
+                </span>
+              ))}
           </div>
         )}
       </div>
@@ -1168,6 +1774,58 @@ function ActiveFbaVisit({
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
           INTERVAL TRACKING
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <select
+            value={selectedIntervalBehaviorId}
+            onChange={(e) => {
+              const next = e.target.value;
+              setSelectedIntervalBehaviorId(next);
+              setIntervalRecords([]);
+              setIntervalRecordEvents([]);
+              setIntervalRunning(false);
+              setIntervalCountdown(Math.max(1, Math.floor(intervalLengthSec || 10)));
+              if (next !== "__other__") setIntervalOtherBehaviorLabel("");
+            }}
+            style={{
+              flex: 1,
+              minWidth: 220,
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 10,
+              color: "#e2e8f0",
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "inherit",
+            }}
+          >
+            <option value="">Select behavior...</option>
+            {behaviors.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+            <option value="__other__">Other</option>
+          </select>
+          {selectedIntervalBehaviorId === "__other__" && (
+            <input
+              value={intervalOtherBehaviorLabel}
+              onChange={(e) => setIntervalOtherBehaviorLabel(e.target.value)}
+              placeholder="Enter behavior..."
+              style={{
+                flex: 1,
+                minWidth: 180,
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 10,
+                color: "#e2e8f0",
+                padding: "10px 12px",
+                fontSize: 13,
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+              }}
+            />
+          )}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div>
@@ -1190,15 +1848,25 @@ function ActiveFbaVisit({
           </div>
           <button
             onClick={startIntervals}
+            disabled={
+              !selectedIntervalBehaviorId ||
+              intervalRunning ||
+              (selectedIntervalBehaviorId === "__other__" && !intervalOtherBehaviorLabel.trim())
+            }
             style={{
-              background: "linear-gradient(135deg, #6366f1, #818cf8)",
-              color: "white",
+              background: !selectedIntervalBehaviorId || intervalRunning ? "#0f172a" : "linear-gradient(135deg, #6366f1, #818cf8)",
+              color: !selectedIntervalBehaviorId || intervalRunning ? "#475569" : "white",
               border: "none",
               borderRadius: 10,
               padding: "10px 14px",
               fontSize: 13,
               fontWeight: 900,
-              cursor: "pointer",
+              cursor:
+                !selectedIntervalBehaviorId ||
+                  intervalRunning ||
+                  (selectedIntervalBehaviorId === "__other__" && !intervalOtherBehaviorLabel.trim())
+                  ? "not-allowed"
+                  : "pointer",
               marginTop: 16
             }}
           >
@@ -1239,7 +1907,22 @@ function ActiveFbaVisit({
             </div>
           )}
         </div>
-        {intervalRecords.length > 0 && (
+        {intervalRecordEvents.length > 0 ? (
+          <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {intervalRecordEvents.map((evt) => (
+              <span key={evt.intervalNumber} style={{
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: evt.behaviorPresent ? "#4ade8011" : "#f8717111",
+                border: `1px solid ${evt.behaviorPresent ? "#4ade8044" : "#f8717144"}`,
+                fontSize: 12,
+                color: "#e2e8f0",
+              }}>
+                #{evt.intervalNumber}: {evt.behaviorPresent ? "Yes" : "No"}
+              </span>
+            ))}
+          </div>
+        ) : intervalRecords.length > 0 ? (
           <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
             {intervalRecords.map((v, i) => (
               <span key={i} style={{
@@ -1254,7 +1937,7 @@ function ActiveFbaVisit({
               </span>
             ))}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Notes & Recommendations */}
@@ -1769,44 +2452,69 @@ function PageInner() {
   const newVisitStep = (searchParams.get("step") === "details" ? "details" : "firstVisit") as "firstVisit" | "details";
 
   useEffect(() => {
-    (async () => {
-      const { data: visits, error } = await supabase
-        .from("visits")
-        .select("*")
-        .order("start_time", { ascending: false });
-
-      if (error) {
-        console.error(error);
-        setData({ visits: [], subjects: [] });
-        return;
-      }
-
-      const mappedVisits: Visit[] = (visits || []).map((v: any) => {
-        const start = v.start_time ?? v.startTime;
-        const end = v.end_time ?? v.endTime;
-
-        return {
-          ...v,
-          type: (v.observation_type ?? v.type ?? "student") as Visit["type"],
-          subjectName: v.subject_name ?? v.subjectName,
-          observerName: v.observer_name ?? v.observerName,
-          isFirstVisit: v.is_first_visit ?? v.isFirstVisit,
-          implementationStatus: v.implementation_status ?? v.implementationStatus,
-          district: v.district ?? v.districtName,
-          schoolName: v.school_name ?? v.schoolName,
-          totalStudents: v.total_students ?? v.totalStudents,
-          abcEntries: v.abc_entries ?? v.abcEntries,
-          latencyRecords: v.latency_records ?? v.latencyRecords,
-          intervalRecords: v.interval_records ?? v.intervalRecords,
-          intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
-          startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
-          endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
-          totalDuration: v.total_duration ?? v.totalDuration,
-        };
+    const logSupabaseError = (label: string, error: any) => {
+      if (!error) return;
+      console.error(label, {
+        message: error.message,
+        details: (error as any).details,
+        hint: (error as any).hint,
+        code: (error as any).code,
+        raw: error,
       });
+    };
 
-      setData({ visits: mappedVisits, subjects: [] });
-    })();
+    const fetchPersistedVisits = async () => {
+      console.info("[visits] Fetch start: visits table");
+      try {
+        const { data: visits, error } = await supabase
+          .from("visits")
+          .select("*")
+          .order("start_time", { ascending: false });
+
+        if (error) {
+          logSupabaseError("[visits] Fetch error", error);
+          setData({ visits: [], subjects: [] });
+          return;
+        }
+
+        const mappedVisits: Visit[] = (visits || []).map((v: any) => {
+          const start = v.start_time ?? v.startTime;
+          const end = v.end_time ?? v.endTime;
+
+          return {
+            ...v,
+            type: (v.observation_type ?? v.type ?? "student") as Visit["type"],
+            subjectName: v.subject_name ?? v.subjectName,
+            observerName: v.observer_name ?? v.observerName,
+            isFirstVisit: v.is_first_visit ?? v.isFirstVisit,
+            implementationStatus: v.implementation_status ?? v.implementationStatus,
+            district: v.district ?? v.districtName,
+            schoolName: v.school_name ?? v.schoolName,
+            totalStudents: v.total_students ?? v.totalStudents,
+            abcEntries: v.abc_entries ?? v.abcEntries,
+            latencyRecords: v.latency_records ?? v.latencyRecords,
+            fbaLatencyEvents: v.fba_latency_events ?? v.fbaLatencyEvents,
+            intervalRecords: v.interval_records ?? v.intervalRecords,
+            intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
+            fbaIntervalSessions: v.fba_interval_sessions ?? v.fbaIntervalSessions,
+            startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
+            endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
+            totalDuration: v.total_duration ?? v.totalDuration,
+          };
+        });
+
+        console.info("[visits] Fetch success", {
+          count: mappedVisits.length,
+          newestStartTime: mappedVisits[0]?.startTime ?? null,
+        });
+        setData({ visits: mappedVisits, subjects: [] });
+      } catch (e) {
+        console.error("[visits] Fetch failed (exception)", e);
+        setData({ visits: [], subjects: [] });
+      }
+    };
+
+    fetchPersistedVisits();
   }, []);
 
   const persistData = useCallback((d: DataState) => {
@@ -1866,6 +2574,17 @@ function PageInner() {
     setData(updated);
 
     (async () => {
+      const logSupabaseError = (label: string, error: any) => {
+        if (!error) return;
+        console.error(label, {
+          message: error.message,
+          details: (error as any).details,
+          hint: (error as any).hint,
+          code: (error as any).code,
+          raw: error,
+        });
+      };
+
       const visitObjectBase = {
         id: crypto.randomUUID(),
         subject_name: completedVisit.subjectName,
@@ -1893,30 +2612,38 @@ function PageInner() {
           ? {
             abc_entries: completedVisit.abcEntries ?? [],
             latency_records: completedVisit.latencyRecords ?? [],
+            fba_latency_events: completedVisit.fbaLatencyEvents ?? [],
             interval_records: completedVisit.intervalRecords ?? [],
             interval_length_sec: completedVisit.intervalLengthSec ?? null,
+            fba_interval_sessions: completedVisit.fbaIntervalSessions ?? [],
           }
           : {}),
       };
 
+      console.info("[visits] Insert start", {
+        type: completedVisit.type,
+        subject: completedVisit.subjectName,
+        startTime: completedVisit.startTime,
+      });
+
       let insertResult = await supabase.from("visits").insert([visitObject]).select();
       if (
         insertResult.error &&
-        /(is_first_visit|district|implementation_status|observation_type|abc_entries|latency_records|interval_records|interval_length_sec)/i.test(
+        /(is_first_visit|district|implementation_status|observation_type|abc_entries|latency_records|fba_latency_events|interval_records|interval_length_sec|fba_interval_sessions)/i.test(
           insertResult.error.message || ""
         )
       ) {
+        logSupabaseError("[visits] Insert retry due to missing column(s)", insertResult.error);
         insertResult = await supabase.from("visits").insert([visitObjectBase as any]).select();
       }
 
-      console.log("Insert data:", insertResult.data);
-
       if (insertResult.error) {
-        console.error("Supabase error message:", insertResult.error.message);
-        console.error("Supabase error details:", (insertResult.error as any).details);
-        console.error("Supabase error hint:", (insertResult.error as any).hint);
-        console.error("Full error object:", JSON.stringify(insertResult.error, null, 2));
+        logSupabaseError("[visits] Insert error", insertResult.error);
+      } else {
+        console.info("[visits] Insert success", { rowsInserted: insertResult.data?.length ?? 0 });
       }
+
+      console.debug("[visits] Insert response data:", insertResult.data);
     })();
 
     setActiveVisit(null);

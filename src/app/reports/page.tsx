@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type VisitRow = {
@@ -8,6 +9,7 @@ type VisitRow = {
   subject_name: string | null;
   school_name: string | null;
   district: string | null;
+  start_time?: number | string | null;
 };
 
 function norm(value: string) {
@@ -45,19 +47,29 @@ export default function ReportsPage() {
     (async () => {
       setLoadingOptions(true);
       setError(null);
+      console.info("[reports] Loading filter options from visits...");
       const { data, error } = await supabase
         .from("visits")
-        .select("type, subject_name, school_name, district")
+        .select("type, subject_name, school_name, district, start_time")
+        .order("start_time", { ascending: false })
         .limit(5000);
 
       if (cancelled) return;
       if (error) {
+        console.error("[reports] Failed to load filter options:", {
+          message: error.message,
+          details: (error as any).details,
+          hint: (error as any).hint,
+          code: (error as any).code,
+          raw: error,
+        });
         setError(error.message || "Failed to load filter options.");
         setLoadingOptions(false);
         return;
       }
 
       const rows = (data || []) as VisitRow[];
+      console.info("[reports] Loaded filter options rows:", rows.length);
       const studentNames: string[] = [];
       const teacherNames: string[] = [];
       const schoolNames: string[] = [];
@@ -128,7 +140,15 @@ export default function ReportsPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-3xl px-4 py-10">
-        <h1 className="text-2xl font-extrabold tracking-tight">Reports</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-extrabold tracking-tight">Reports</h1>
+          <Link
+            href="/fba-reports"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-bold text-slate-200 hover:border-slate-500"
+          >
+            FBA Reports
+          </Link>
+        </div>
         <p className="mt-2 text-sm text-slate-400">
           Filter observation data and download an Excel report.
         </p>
