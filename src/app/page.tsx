@@ -766,10 +766,17 @@ function ActiveVisit({
                 </div>
               )}
 
-              <div>
-                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>INTENSITY</div>
-                <IntensityPicker value={b.intensity} onChange={val => setIntensity(b.id, val)} />
-              </div>
+             {b.category === "challenging" && (
+  <div>
+    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
+      INTENSITY
+    </div>
+    <IntensityPicker
+      value={b.intensity}
+      onChange={val => setIntensity(b.id, val)}
+    />
+  </div>
+)}
             </div>
           );
         })}
@@ -994,7 +1001,10 @@ function ActiveFbaVisit({
     setAbcEntries((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const studentLib = BEHAVIOR_LIBRARY.student as Behavior[];
+  const studentLib = [
+  ...BEHAVIOR_LIBRARY.student,
+  ...BEHAVIOR_LIBRARY.classroom,
+] as Behavior[];
   const availableLib = studentLib.filter((b) => !behaviors.find((bb) => bb.id === b.id));
   const frequencyBehaviors = behaviors.filter((b) => b.type === "frequency");
   const durationBehaviors = behaviors.filter((b) => b.type === "duration");
