@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
+import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -257,6 +257,464 @@ function IntensityPicker({ value, onChange }: { value: number | null | undefined
   );
 }
 
+type BehaviorSetupSectionProps = {
+  behaviors: Behavior[];
+  availableLib: Behavior[];
+  showAddBehavior: boolean;
+  onToggleAddBehavior: () => void;
+  customBehavior: { label: string; type: string; behaviorType?: BehaviorType };
+  setCustomBehavior: Dispatch<SetStateAction<{ label: string; type: string; behaviorType?: BehaviorType }>>;
+  setBehaviors: Dispatch<SetStateAction<Behavior[]>>;
+  onAddBehaviorFromLibrary: (bDef: Behavior) => void;
+  onAddCustomBehavior: () => void;
+  onRemoveBehavior: (bid: string) => void;
+  onRecordFrequency: (bid: string) => void;
+  onToggleDuration: (bid: string) => void;
+  onSetIntensity: (bid: string, val: number) => void;
+  durationTimers: Record<string, number>;
+  activeTimers: MutableRefObject<Record<string, boolean>>;
+  elapsed: number;
+  totalStudents?: number | null;
+};
+
+function useBehaviorDurationTimer(
+  activeTimers: MutableRefObject<Record<string, boolean>>,
+  setDurationTimers: Dispatch<SetStateAction<Record<string, number>>>
+) {
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDurationTimers((prev) => {
+        const next = { ...prev };
+        Object.keys(activeTimers.current).forEach((bid) => {
+          if (activeTimers.current[bid]) {
+            next[bid] = (next[bid] || 0) + 1;
+          }
+        });
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [activeTimers, setDurationTimers]);
+}
+
+function BehaviorSetupSection({
+  behaviors,
+  availableLib,
+  showAddBehavior,
+  onToggleAddBehavior,
+  customBehavior,
+  setCustomBehavior,
+  setBehaviors,
+  onAddBehaviorFromLibrary,
+  onAddCustomBehavior,
+  onRemoveBehavior,
+  onRecordFrequency,
+  onToggleDuration,
+  onSetIntensity,
+  durationTimers,
+  activeTimers,
+  elapsed,
+  totalStudents,
+}: BehaviorSetupSectionProps) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>BEHAVIORS</div>
+        <button
+          onClick={onToggleAddBehavior}
+          style={{
+            background: "#38bdf8",
+            color: "#0f172a",
+            border: "none",
+            borderRadius: 8,
+            padding: "6px 14px",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          + Add Behavior
+        </button>
+      </div>
+
+      {behaviors.length === 0 && (
+        <div
+          style={{
+            background: "#1e293b",
+            borderRadius: 12,
+            padding: 24,
+            textAlign: "center",
+            border: "1px dashed #334155",
+            color: "#475569",
+            fontSize: 14,
+          }}
+        >
+          No behaviors added yet. Click + Add Behavior to begin.
+        </div>
+      )}
+
+      {behaviors.map((b) => {
+        const isRunning = !!activeTimers.current[b.id];
+        const durSec = durationTimers[b.id] || 0;
+        return (
+          <div
+            key={b.id}
+            style={{
+              background: "#1e293b",
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 10,
+              border: `1px solid ${isRunning ? "#38bdf855" : "#334155"}`,
+              transition: "border-color 0.2s",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>{b.label}</div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
+                  <Badge color={b.type === "frequency" ? "#818cf8" : "#34d399"}>
+                    {b.type === "frequency"
+                      ? (b.measureType === "student-count" ? "Student Count" : "Frequency")
+                      : "Duration"}
+                  </Badge>
+                  {b.category === "positive" && <Badge color="#4ade80">Positive</Badge>}
+                  {b.category === "challenging" && <Badge color="#f87171">Challenging</Badge>}
+                </div>
+              </div>
+              <button
+                onClick={() => onRemoveBehavior(b.id)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#475569",
+                  fontSize: 18,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                  padding: 2,
+                }}
+              >
+                x
+              </button>
+            </div>
+
+            {b.type === "frequency" ? (
+              <div style={{ marginBottom: 12 }}>
+                {b.measureType === "student-count" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                        {b.id === "cls-on-task"
+                          ? "Number of Students On Task"
+                          : b.id === "cls-off-task"
+                            ? "Number of Students Off Task"
+                            : "Number of Students"}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <button
+                          onClick={() =>
+                            setBehaviors((prev) =>
+                              prev.map((bb) => (bb.id === b.id ? { ...bb, count: Math.max(0, (bb.count || 0) - 1) } : bb))
+                            )
+                          }
+                          style={{
+                            background: "#334155",
+                            color: "#e2e8f0",
+                            border: "none",
+                            borderRadius: 8,
+                            width: 36,
+                            height: 36,
+                            fontSize: 20,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                          }}
+                        >
+                          -
+                        </button>
+                        <div style={{ textAlign: "center", minWidth: 50 }}>
+                          <div style={{ fontSize: 32, fontWeight: 900, color: "#38bdf8", lineHeight: 1 }}>{b.count || 0}</div>
+                          <div style={{ fontSize: 10, color: "#64748b" }}>students</div>
+                        </div>
+                        <button
+                          onClick={() =>
+                            setBehaviors((prev) =>
+                              prev.map((bb) =>
+                                bb.id === b.id ? { ...bb, count: Math.min(totalStudents || 99, (bb.count || 0) + 1) } : bb
+                              )
+                            )
+                          }
+                          style={{
+                            background: "#334155",
+                            color: "#e2e8f0",
+                            border: "none",
+                            borderRadius: 8,
+                            width: 36,
+                            height: 36,
+                            fontSize: 20,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                            lineHeight: 1,
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    {totalStudents && (
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 26, fontWeight: 900, color: "#f59e0b", lineHeight: 1 }}>
+                          {Math.round(((b.count || 0) / totalStudents) * 100)}%
+                        </div>
+                        <div style={{ fontSize: 10, color: "#64748b" }}>of {totalStudents} students</div>
+                      </div>
+                    )}
+                    {!totalStudents && (
+                      <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
+                        Add class size at visit setup for % calculation
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                    <button
+                      onClick={() => onRecordFrequency(b.id)}
+                      style={{
+                        background: "linear-gradient(135deg, #6366f1, #818cf8)",
+                        color: "white",
+                        border: "none",
+                        borderRadius: 12,
+                        padding: "10px 24px",
+                        fontSize: 14,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        minWidth: 100,
+                      }}
+                    >
+                      Record (+1)
+                    </button>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 32, fontWeight: 900, color: "#818cf8", lineHeight: 1 }}>{b.count || 0}</div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>occurrences</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#94a3b8" }}>{calcRate(b.count || 0, elapsed)}</div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>rate</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+                <button
+                  onClick={() => onToggleDuration(b.id)}
+                  style={{
+                    background: isRunning ? "linear-gradient(135deg, #f97316, #fb923c)" : "linear-gradient(135deg, #34d399, #6ee7b7)",
+                    color: isRunning ? "white" : "#0f172a",
+                    border: "none",
+                    borderRadius: 12,
+                    padding: "10px 20px",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    minWidth: 100,
+                  }}
+                >
+                  {isRunning ? "Stop" : "Start"}
+                </button>
+                <div style={{ textAlign: "center" }}>
+                  <div
+                    style={{
+                      fontSize: 28,
+                      fontWeight: 900,
+                      color: isRunning ? "#34d399" : "#6ee7b7",
+                      lineHeight: 1,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {fmtDuration(durSec)}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>recorded</div>
+                </div>
+                {elapsed > 0 && (
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#94a3b8" }}>{Math.round((durSec / elapsed) * 100)}%</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>of visit</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {b.category === "challenging" && (
+              <div>
+                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>INTENSITY</div>
+                <IntensityPicker value={b.intensity} onChange={(val) => onSetIntensity(b.id, val)} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {showAddBehavior && (
+        <div
+          style={{
+            background: "#0f172a",
+            borderRadius: 12,
+            padding: 16,
+            border: "1px solid #334155",
+            marginTop: 8,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 12 }}>BEHAVIOR LIBRARY</div>
+          {availableLib.length === 0 && <div style={{ color: "#475569", fontSize: 13, marginBottom: 16 }}>All library behaviors added.</div>}
+          {["positive", "challenging"].map((cat) => {
+            const catBehaviors = availableLib.filter((b) => b.category === cat);
+            if (catBehaviors.length === 0) return null;
+            return (
+              <div key={cat} style={{ marginBottom: 14 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: cat === "positive" ? "#4ade80" : "#f87171",
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {cat === "positive" ? "POSITIVE BEHAVIORS" : "CHALLENGING BEHAVIORS"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {catBehaviors.map((b) => (
+                    <button
+                      key={b.id}
+                      onClick={() => onAddBehaviorFromLibrary(b)}
+                      style={{
+                        background: cat === "positive" ? "#4ade8011" : "#f8717111",
+                        border: `1px solid ${cat === "positive" ? "#4ade8044" : "#f8717144"}`,
+                        borderRadius: 8,
+                        color: "#cbd5e1",
+                        padding: "5px 10px",
+                        fontSize: 12,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                      }}
+                    >
+                      {b.label}
+                      <span style={{ color: b.type === "frequency" ? "#818cf8" : "#34d399", fontSize: 10 }}>
+                        {b.type === "frequency" ? "F" : "D"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>CUSTOM BEHAVIOR</div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
+                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  color: "#e2e8f0",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="customBehaviorType"
+                  checked={customBehavior.behaviorType === "positive"}
+                  onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "positive" }))}
+                />
+                Positive
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
+                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  color: "#e2e8f0",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="customBehaviorType"
+                  checked={customBehavior.behaviorType === "challenging"}
+                  onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "challenging" }))}
+                />
+                Challenging
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                value={customBehavior.label}
+                onChange={(e) => setCustomBehavior((p) => ({ ...p, label: e.target.value }))}
+                placeholder="Behavior name..."
+                style={{
+                  flex: 1,
+                  minWidth: 160,
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  borderRadius: 8,
+                  color: "#e2e8f0",
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                }}
+              />
+              <select
+                value={customBehavior.type}
+                onChange={(e) => setCustomBehavior((p) => ({ ...p, type: e.target.value }))}
+                style={{
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  borderRadius: 8,
+                  color: "#e2e8f0",
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                }}
+              >
+                <option value="frequency">Frequency</option>
+                <option value="duration">Duration</option>
+              </select>
+              <button
+                onClick={onAddCustomBehavior}
+                style={{
+                  background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
+                  color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 16px",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+                disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Active Visit Screen ---
 function FirstVisitSelector({
   value,
@@ -473,37 +931,7 @@ function ActiveVisit({
     return () => clearInterval(timerRef.current as any);
   }, []);
 
-  // Duration timer tick (FBA behaviors)
-  useEffect(() => {
-    const id = setInterval(() => {
-      setDurationTimers((prev) => {
-        const next = { ...prev };
-        Object.keys(activeTimers.current).forEach((bid) => {
-          if (activeTimers.current[bid]) {
-            next[bid] = (next[bid] || 0) + 1;
-          }
-        });
-        return next;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Duration timer tick
-  useEffect(() => {
-    const id = setInterval(() => {
-      setDurationTimers(prev => {
-        const next = { ...prev };
-        Object.keys(activeTimers.current).forEach((bid) => {
-          if (activeTimers.current[bid]) {
-            next[bid] = (next[bid] || 0) + 1;
-          }
-        });
-        return next;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
+  useBehaviorDurationTimer(activeTimers, setDurationTimers);
 
   const toggleDuration = (bid: string) => {
     activeTimers.current[bid] = !activeTimers.current[bid];
@@ -638,245 +1066,25 @@ function ActiveVisit({
         </div>
       )}
 
-      {/* Behaviors */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>BEHAVIORS</div>
-          <button onClick={() => setShowAddBehavior(!showAddBehavior)} style={{
-            background: "#38bdf8", color: "#0f172a", border: "none", borderRadius: 8,
-            padding: "6px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer"
-          }}>+ Add Behavior</button>
-        </div>
-
-        {behaviors.length === 0 && (
-          <div style={{
-            background: "#1e293b", borderRadius: 12, padding: 24, textAlign: "center",
-            border: "1px dashed #334155", color: "#475569", fontSize: 14
-          }}>No behaviors added yet. Click + Add Behavior to begin.</div>
-        )}
-
-        {behaviors.map(b => {
-          const isRunning = !!activeTimers.current[b.id];
-          const durSec = durationTimers[b.id] || 0;
-          return (
-            <div key={b.id} style={{
-              background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 10,
-              border: `1px solid ${isRunning ? "#38bdf855" : "#334155"}`,
-              transition: "border-color 0.2s"
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9" }}>{b.label}</div>
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
-                    <Badge color={b.type === "frequency" ? "#818cf8" : "#34d399"}>
-                      {b.type === "frequency"
-                        ? (b.measureType === "student-count" ? "Student Count" : "Frequency")
-                        : "Duration"}
-                    </Badge>
-                    {b.category === "positive" && <Badge color="#4ade80">Positive</Badge>}
-                    {b.category === "challenging" && <Badge color="#f87171">Challenging</Badge>}
-                  </div>
-                </div>
-                <button onClick={() => removeBehavior(b.id)} style={{
-                  background: "none", border: "none", color: "#475569", fontSize: 18,
-                  cursor: "pointer", lineHeight: 1, padding: 2
-                }}>x</button>
-              </div>
-
-              {b.type === "frequency" ? (
-                <div style={{ marginBottom: 12 }}>
-                  {b.measureType === "student-count" ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <div>
-                        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-                          {b.id === "cls-on-task"
-                            ? "Number of Students On Task"
-                            : b.id === "cls-off-task"
-                              ? "Number of Students Off Task"
-                              : "Number of Students"}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <button onClick={() => setBehaviors(prev => prev.map(bb => bb.id === b.id ? { ...bb, count: Math.max(0, (bb.count || 0) - 1) } : bb))} style={{
-                            background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8,
-                            width: 36, height: 36, fontSize: 20, fontWeight: 800, cursor: "pointer", lineHeight: 1
-                          }}>-</button>
-                          <div style={{ textAlign: "center", minWidth: 50 }}>
-                            <div style={{ fontSize: 32, fontWeight: 900, color: "#38bdf8", lineHeight: 1 }}>{b.count || 0}</div>
-                            <div style={{ fontSize: 10, color: "#64748b" }}>students</div>
-                          </div>
-                          <button onClick={() => setBehaviors(prev => prev.map(bb => bb.id === b.id ? { ...bb, count: Math.min(totalStudents || 99, (bb.count || 0) + 1) } : bb))} style={{
-                            background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8,
-                            width: 36, height: 36, fontSize: 20, fontWeight: 800, cursor: "pointer", lineHeight: 1
-                          }}>+</button>
-                        </div>
-                      </div>
-                      {totalStudents && (
-                        <div style={{ textAlign: "center" }}>
-                          <div style={{ fontSize: 26, fontWeight: 900, color: "#f59e0b", lineHeight: 1 }}>
-                            {Math.round(((b.count || 0) / totalStudents) * 100)}%
-                          </div>
-                          <div style={{ fontSize: 10, color: "#64748b" }}>of {totalStudents} students</div>
-                        </div>
-                      )}
-                      {!totalStudents && (
-                        <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
-                          Add class size at visit setup for % calculation
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                      <button onClick={() => recordFrequency(b.id)} style={{
-                        background: "linear-gradient(135deg, #6366f1, #818cf8)",
-                        color: "white", border: "none", borderRadius: 12, padding: "10px 24px",
-                        fontSize: 14, fontWeight: 800, cursor: "pointer", minWidth: 100
-                      }}>Record (+1)</button>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 32, fontWeight: 900, color: "#818cf8", lineHeight: 1 }}>{b.count || 0}</div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>occurrences</div>
-                      </div>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: "#94a3b8" }}>{calcRate(b.count || 0, elapsed)}</div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>rate</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-                  <button onClick={() => toggleDuration(b.id)} style={{
-                    background: isRunning ? "linear-gradient(135deg, #f97316, #fb923c)" : "linear-gradient(135deg, #34d399, #6ee7b7)",
-                    color: isRunning ? "white" : "#0f172a", border: "none", borderRadius: 12,
-                    padding: "10px 20px", fontSize: 13, fontWeight: 800, cursor: "pointer", minWidth: 100
-                  }}>{isRunning ? "Stop" : "Start"}</button>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 28, fontWeight: 900, color: isRunning ? "#34d399" : "#6ee7b7", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
-                      {fmtDuration(durSec)}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>recorded</div>
-                  </div>
-                  {elapsed > 0 && (
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: "#94a3b8" }}>
-                        {Math.round((durSec / elapsed) * 100)}%
-                      </div>
-                      <div style={{ fontSize: 11, color: "#64748b" }}>of visit</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-             {b.category === "challenging" && (
-  <div>
-    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
-      INTENSITY
-    </div>
-    <IntensityPicker
-      value={b.intensity}
-      onChange={val => setIntensity(b.id, val)}
-    />
-  </div>
-)}
-            </div>
-          );
-        })}
-
-        {/* Add behavior panel */}
-        {showAddBehavior && (
-          <div style={{
-            background: "#0f172a", borderRadius: 12, padding: 16,
-            border: "1px solid #334155", marginTop: 8
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 12 }}>BEHAVIOR LIBRARY</div>
-            {availableLib.length === 0 && <div style={{ color: "#475569", fontSize: 13, marginBottom: 16 }}>All library behaviors added.</div>}
-            {["positive", "challenging"].map(cat => {
-              const catBehaviors = availableLib.filter(b => b.category === cat);
-              if (catBehaviors.length === 0) return null;
-              return (
-                <div key={cat} style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6,
-                    color: cat === "positive" ? "#4ade80" : "#f87171",
-                    letterSpacing: "0.06em"
-                  }}>
-                    {cat === "positive" ? "POSITIVE BEHAVIORS" : "CHALLENGING BEHAVIORS"}
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {catBehaviors.map(b => (
-                      <button key={b.id} onClick={() => addBehaviorFromLibrary(b)} style={{
-                        background: cat === "positive" ? "#4ade8011" : "#f8717111",
-                        border: `1px solid ${cat === "positive" ? "#4ade8044" : "#f8717144"}`,
-                        borderRadius: 8,
-                        color: "#cbd5e1", padding: "5px 10px", fontSize: 12, cursor: "pointer",
-                        display: "flex", alignItems: "center", gap: 5
-                      }}>
-                        {b.label}
-                        <span style={{ color: b.type === "frequency" ? "#818cf8" : "#34d399", fontSize: 10 }}>
-                          {b.type === "frequency" ? "F" : "D"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-            <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>CUSTOM BEHAVIOR</div>
-              <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 10px", borderRadius: 999,
-                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
-                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
-                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
-                }}>
-                  <input
-                    type="radio"
-                    name="customBehaviorType"
-                    checked={customBehavior.behaviorType === "positive"}
-                    onChange={() => setCustomBehavior(p => ({ ...p, behaviorType: "positive" }))}
-                  />
-                  Positive
-                </label>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 10px", borderRadius: 999,
-                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
-                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
-                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
-                }}>
-                  <input
-                    type="radio"
-                    name="customBehaviorType"
-                    checked={customBehavior.behaviorType === "challenging"}
-                    onChange={() => setCustomBehavior(p => ({ ...p, behaviorType: "challenging" }))}
-                  />
-                  Challenging
-                </label>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <input value={customBehavior.label} onChange={e => setCustomBehavior(p => ({ ...p, label: e.target.value }))}
-                  placeholder="Behavior name..." style={{
-                    flex: 1, minWidth: 160, background: "#1e293b", border: "1px solid #334155",
-                    borderRadius: 8, color: "#e2e8f0", padding: "8px 12px", fontSize: 13, fontFamily: "inherit"
-                  }} />
-                <select value={customBehavior.type} onChange={e => setCustomBehavior(p => ({ ...p, type: e.target.value }))} style={{
-                  background: "#1e293b", border: "1px solid #334155", borderRadius: 8,
-                  color: "#e2e8f0", padding: "8px 12px", fontSize: 13, fontFamily: "inherit"
-                }}>
-                  <option value="frequency">Frequency</option>
-                  <option value="duration">Duration</option>
-                </select>
-                <button onClick={addCustomBehavior} style={{
-                  background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
-                  color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
-                  border: "none", borderRadius: 8,
-                  padding: "8px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer"
-                }} disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}>Add</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      <BehaviorSetupSection
+        behaviors={behaviors}
+        availableLib={availableLib}
+        showAddBehavior={showAddBehavior}
+        onToggleAddBehavior={() => setShowAddBehavior(!showAddBehavior)}
+        customBehavior={customBehavior}
+        setCustomBehavior={setCustomBehavior}
+        setBehaviors={setBehaviors}
+        onAddBehaviorFromLibrary={addBehaviorFromLibrary}
+        onAddCustomBehavior={addCustomBehavior}
+        onRemoveBehavior={removeBehavior}
+        onRecordFrequency={recordFrequency}
+        onToggleDuration={toggleDuration}
+        onSetIntensity={setIntensity}
+        durationTimers={durationTimers}
+        activeTimers={activeTimers}
+        elapsed={elapsed}
+        totalStudents={totalStudents}
+      />
 
       {/* Notes & Recommendations */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
@@ -930,9 +1138,6 @@ function ActiveFbaVisit({
     type: "frequency",
     behaviorType: undefined,
   });
-
-  const [selectedFrequencyBehaviorId, setSelectedFrequencyBehaviorId] = useState<string>("");
-  const [selectedDurationBehaviorId, setSelectedDurationBehaviorId] = useState<string>("");
   const [selectedLatencyBehaviorId, setSelectedLatencyBehaviorId] = useState<string>("");
   const [latencyOtherBehaviorLabel, setLatencyOtherBehaviorLabel] = useState<string>("");
   const [selectedIntervalBehaviorId, setSelectedIntervalBehaviorId] = useState<string>("");
@@ -955,7 +1160,7 @@ function ActiveFbaVisit({
 
   const [intervalLengthSec, setIntervalLengthSec] = useState<number>(visit.intervalLengthSec || 10);
   const [intervalRecords, setIntervalRecords] = useState<boolean[]>(visit.intervalRecords || []);
-  const [fbaIntervalSessions, setFbaIntervalSessions] = useState<FbaIntervalSession[]>(visit.fbaIntervalSessions || []);
+  const [fbaIntervalSessions] = useState<FbaIntervalSession[]>(visit.fbaIntervalSessions || []);
   const [intervalRecordEvents, setIntervalRecordEvents] = useState<FbaIntervalRecord[]>([]);
   const [intervalRunning, setIntervalRunning] = useState(false);
   const [intervalCountdown, setIntervalCountdown] = useState(intervalLengthSec);
@@ -986,6 +1191,8 @@ function ActiveFbaVisit({
     setIntervalRunning(false);
   }, [intervalCountdown, intervalRunning]);
 
+  useBehaviorDurationTimer(activeTimers, setDurationTimers);
+
   const addAbcEntry = () => {
     setAbcEntries((prev) => {
       if (prev.length >= 6) return prev;
@@ -1001,13 +1208,8 @@ function ActiveFbaVisit({
     setAbcEntries((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const studentLib = [
-  ...BEHAVIOR_LIBRARY.student,
-  ...BEHAVIOR_LIBRARY.classroom,
-] as Behavior[];
+  const studentLib = [...BEHAVIOR_LIBRARY.student, ...BEHAVIOR_LIBRARY.classroom] as Behavior[];
   const availableLib = studentLib.filter((b) => !behaviors.find((bb) => bb.id === b.id));
-  const frequencyBehaviors = behaviors.filter((b) => b.type === "frequency");
-  const durationBehaviors = behaviors.filter((b) => b.type === "duration");
 
   const addBehaviorFromLibrary = (bDef: Behavior) => {
     if (!behaviors.find((b) => b.id === bDef.id)) {
@@ -1041,23 +1243,25 @@ function ActiveFbaVisit({
       delete next[bid];
       return next;
     });
-    if (selectedFrequencyBehaviorId === bid) setSelectedFrequencyBehaviorId("");
-    if (selectedDurationBehaviorId === bid) setSelectedDurationBehaviorId("");
     if (selectedLatencyBehaviorId === bid) setSelectedLatencyBehaviorId("");
     if (selectedIntervalBehaviorId === bid) setSelectedIntervalBehaviorId("");
   };
 
-  const recordFrequencySelected = () => {
-    if (!selectedFrequencyBehaviorId) return;
+  const recordFrequency = (bid: string) => {
     setBehaviors((prev) =>
-      prev.map((b) => (b.id === selectedFrequencyBehaviorId ? { ...b, count: (b.count || 0) + 1 } : b))
+      prev.map((b) => (b.id === bid ? { ...b, count: (b.count || 0) + 1 } : b))
     );
   };
 
-  const toggleDurationSelected = () => {
-    if (!selectedDurationBehaviorId) return;
-    activeTimers.current[selectedDurationBehaviorId] = !activeTimers.current[selectedDurationBehaviorId];
+  const toggleDuration = (bid: string) => {
+    activeTimers.current[bid] = !activeTimers.current[bid];
     setDurationTimers((prev) => ({ ...prev })); // force re-render
+  };
+
+  const setIntensity = (bid: string, val: number) => {
+    setBehaviors((prev) =>
+      prev.map((b) => (b.id === bid ? { ...b, intensity: val } : b))
+    );
   };
 
   const startLatency = () => {
@@ -1208,214 +1412,24 @@ function ActiveFbaVisit({
         </div>
       </div>
 
-      {/* Behavior Setup */}
-      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>
-            BEHAVIOR SETUP (STUDENT LIBRARY)
-          </div>
-          <button
-            onClick={() => setShowAddBehavior((v) => !v)}
-            style={{
-              background: showAddBehavior ? "#0f172a" : "#38bdf8",
-              color: showAddBehavior ? "#e2e8f0" : "#0f172a",
-              border: "none",
-              borderRadius: 10,
-              padding: "8px 12px",
-              fontSize: 12,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            {showAddBehavior ? "Close" : "+ Add Behavior"}
-          </button>
-        </div>
-
-        {behaviors.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#64748b" }}>
-            Add at least one behavior to enable Frequency/Duration/Latency/Interval tracking.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {behaviors.map((b) => (
-              <div
-                key={b.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "#0f172a",
-                  border: "1px solid #334155",
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 800, color: "#e2e8f0" }}>{b.label}</span>
-                <span style={{ fontSize: 11, color: "#64748b" }}>
-                  {b.category === "positive" ? "Positive" : b.category === "challenging" ? "Challenging" : "Unlabeled"} |{" "}
-                  {b.type === "frequency" ? "Frequency" : "Duration"}
-                </span>
-                <button
-                  onClick={() => removeBehavior(b.id)}
-                  style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 12 }}
-                  aria-label={`Remove ${b.label}`}
-                  title="Remove"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {showAddBehavior && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-              <div style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 10 }}>POSITIVE (LIBRARY)</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
-                  {availableLib.filter((b) => b.category === "positive").map((b) => (
-                    <button
-                      key={b.id}
-                      onClick={() => addBehaviorFromLibrary(b)}
-                      style={{
-                        textAlign: "left",
-                        background: "transparent",
-                        border: "1px solid #334155",
-                        borderRadius: 10,
-                        padding: "8px 10px",
-                        cursor: "pointer",
-                        color: "#e2e8f0",
-                        fontSize: 13,
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      {b.label} <span style={{ color: "#64748b", fontSize: 11 }}>({b.type})</span>
-                    </button>
-                  ))}
-                  {availableLib.filter((b) => b.category === "positive").length === 0 && (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No more positive behaviors.</div>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 10 }}>CHALLENGING (LIBRARY)</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
-                  {availableLib.filter((b) => b.category === "challenging").map((b) => (
-                    <button
-                      key={b.id}
-                      onClick={() => addBehaviorFromLibrary(b)}
-                      style={{
-                        textAlign: "left",
-                        background: "transparent",
-                        border: "1px solid #334155",
-                        borderRadius: 10,
-                        padding: "8px 10px",
-                        cursor: "pointer",
-                        color: "#e2e8f0",
-                        fontSize: 13,
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      {b.label} <span style={{ color: "#64748b", fontSize: 11 }}>({b.type})</span>
-                    </button>
-                  ))}
-                  {availableLib.filter((b) => b.category === "challenging").length === 0 && (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>No more challenging behaviors.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12, background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", marginBottom: 10 }}>CUSTOM BEHAVIOR</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 10px", borderRadius: 999,
-                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
-                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
-                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
-                }}>
-                  <input
-                    type="radio"
-                    name="fbaCustomBehaviorType"
-                    checked={customBehavior.behaviorType === "positive"}
-                    onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "positive" }))}
-                  />
-                  Positive
-                </label>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 10px", borderRadius: 999,
-                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
-                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
-                  cursor: "pointer", fontSize: 12, color: "#e2e8f0"
-                }}>
-                  <input
-                    type="radio"
-                    name="fbaCustomBehaviorType"
-                    checked={customBehavior.behaviorType === "challenging"}
-                    onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "challenging" }))}
-                  />
-                  Challenging
-                </label>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <input
-                  value={customBehavior.label}
-                  onChange={(e) => setCustomBehavior((p) => ({ ...p, label: e.target.value }))}
-                  placeholder="Behavior name..."
-                  style={{
-                    flex: 1,
-                    minWidth: 160,
-                    background: "#1e293b",
-                    border: "1px solid #334155",
-                    borderRadius: 8,
-                    color: "#e2e8f0",
-                    padding: "8px 12px",
-                    fontSize: 13,
-                    fontFamily: "inherit",
-                  }}
-                />
-                <select
-                  value={customBehavior.type}
-                  onChange={(e) => setCustomBehavior((p) => ({ ...p, type: e.target.value }))}
-                  style={{
-                    background: "#1e293b",
-                    border: "1px solid #334155",
-                    borderRadius: 8,
-                    color: "#e2e8f0",
-                    padding: "8px 12px",
-                    fontSize: 13,
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <option value="frequency">Frequency</option>
-                  <option value="duration">Duration</option>
-                </select>
-                <button
-                  onClick={addCustomBehavior}
-                  style={{
-                    background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
-                    color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
-                    border: "none",
-                    borderRadius: 8,
-                    padding: "8px 16px",
-                    fontWeight: 800,
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }}
-                  disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      <BehaviorSetupSection
+        behaviors={behaviors}
+        availableLib={availableLib}
+        showAddBehavior={showAddBehavior}
+        onToggleAddBehavior={() => setShowAddBehavior((v) => !v)}
+        customBehavior={customBehavior}
+        setCustomBehavior={setCustomBehavior}
+        setBehaviors={setBehaviors}
+        onAddBehaviorFromLibrary={addBehaviorFromLibrary}
+        onAddCustomBehavior={addCustomBehavior}
+        onRemoveBehavior={removeBehavior}
+        onRecordFrequency={recordFrequency}
+        onToggleDuration={toggleDuration}
+        onSetIntensity={setIntensity}
+        durationTimers={durationTimers}
+        activeTimers={activeTimers}
+        elapsed={elapsed}
+      />
 
       {/* ABC Recording */}
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
@@ -1497,143 +1511,6 @@ function ActiveFbaVisit({
             </div>
           </div>
         ))}
-      </div>
-
-      {/* Frequency Tracking */}
-      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
-          FREQUENCY TRACKING
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <select
-            value={selectedFrequencyBehaviorId}
-            onChange={(e) => setSelectedFrequencyBehaviorId(e.target.value)}
-            style={{
-              flex: 1,
-              minWidth: 220,
-              background: "#0f172a",
-              border: "1px solid #334155",
-              borderRadius: 10,
-              color: "#e2e8f0",
-              padding: "10px 12px",
-              fontSize: 13,
-              fontFamily: "inherit",
-            }}
-          >
-            <option value="">Select behavior...</option>
-            {frequencyBehaviors.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={recordFrequencySelected}
-            disabled={!selectedFrequencyBehaviorId}
-            style={{
-              background: !selectedFrequencyBehaviorId ? "#0f172a" : "#818cf8",
-              color: !selectedFrequencyBehaviorId ? "#475569" : "#0f172a",
-              border: "none",
-              borderRadius: 10,
-              padding: "10px 14px",
-              fontSize: 13,
-              fontWeight: 900,
-              cursor: !selectedFrequencyBehaviorId ? "not-allowed" : "pointer",
-            }}
-          >
-            Record +1
-          </button>
-        </div>
-        {frequencyBehaviors.length === 0 ? (
-          <div style={{ marginTop: 10, fontSize: 12, color: "#64748b" }}>No frequency behaviors added yet.</div>
-        ) : (
-          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-            {frequencyBehaviors.map((b) => (
-              <div key={b.id} style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 900, color: "#e2e8f0" }}>{b.label}</div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>
-                      {b.category === "positive" ? "Positive" : b.category === "challenging" ? "Challenging" : "Unlabeled"}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: "#818cf8", fontVariantNumeric: "tabular-nums" }}>
-                    {b.count || 0}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Duration Tracking */}
-      <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>
-          DURATION TRACKING
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <select
-            value={selectedDurationBehaviorId}
-            onChange={(e) => setSelectedDurationBehaviorId(e.target.value)}
-            style={{
-              flex: 1,
-              minWidth: 220,
-              background: "#0f172a",
-              border: "1px solid #334155",
-              borderRadius: 10,
-              color: "#e2e8f0",
-              padding: "10px 12px",
-              fontSize: 13,
-              fontFamily: "inherit",
-            }}
-          >
-            <option value="">Select behavior...</option>
-            {durationBehaviors.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={toggleDurationSelected}
-            disabled={!selectedDurationBehaviorId}
-            style={{
-              background: !selectedDurationBehaviorId ? "#0f172a" : "linear-gradient(135deg, #34d399, #6ee7b7)",
-              color: !selectedDurationBehaviorId ? "#475569" : "#0f172a",
-              border: "none",
-              borderRadius: 10,
-              padding: "10px 14px",
-              fontSize: 13,
-              fontWeight: 900,
-              cursor: !selectedDurationBehaviorId ? "not-allowed" : "pointer",
-            }}
-          >
-            {selectedDurationBehaviorId && activeTimers.current[selectedDurationBehaviorId] ? "Stop" : "Start"}
-          </button>
-        </div>
-        {durationBehaviors.length === 0 ? (
-          <div style={{ marginTop: 10, fontSize: 12, color: "#64748b" }}>No duration behaviors added yet.</div>
-        ) : (
-          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-            {durationBehaviors.map((b) => (
-              <div key={b.id} style={{ background: "#0f172a", borderRadius: 12, padding: 12, border: "1px solid #334155" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 900, color: "#e2e8f0" }}>{b.label}</div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>
-                      {b.category === "positive" ? "Positive" : b.category === "challenging" ? "Challenging" : "Unlabeled"}
-                      {activeTimers.current[b.id] ? " | running" : ""}
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: "#34d399", fontVariantNumeric: "tabular-nums" }}>
-                    {fmtDuration(durationTimers[b.id] || 0)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Latency */}
@@ -3148,4 +3025,3 @@ export default function Page() {
     </Suspense>
   );
 }
-
