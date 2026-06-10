@@ -6,6 +6,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { GRADE_OPTIONS } from "@/lib/grades";
+import {
+  buildIntensityTrendLabel,
+  getBehaviorIntensityStats,
+  normalizeBehaviorOccurrences,
+  type BehaviorOccurrence,
+} from "@/lib/behavior-intensity";
 
 type Behavior = {
   id: string;
@@ -15,6 +21,8 @@ type Behavior = {
   measureType?: string;
   count?: number;
   intensity?: number | null;
+  occurrences?: BehaviorOccurrence[];
+  intensityRecords?: BehaviorOccurrence[];
   durationSec?: number;
   custom?: boolean;
   [key: string]: any;
@@ -257,6 +265,14 @@ function IntensityPicker({ value, onChange }: { value: number | null | undefined
   );
 }
 
+type PendingIntensityPrompt = {
+  behaviorId: string;
+  behaviorLabel: string;
+  occurrenceType: "frequency" | "duration";
+  timestamp: number;
+  durationSec?: number;
+};
+
 type BehaviorSetupSectionProps = {
   behaviors: Behavior[];
   availableLib: Behavior[];
@@ -270,7 +286,9 @@ type BehaviorSetupSectionProps = {
   onRemoveBehavior: (bid: string) => void;
   onRecordFrequency: (bid: string) => void;
   onToggleDuration: (bid: string) => void;
-  onSetIntensity: (bid: string, val: number) => void;
+  pendingIntensity: PendingIntensityPrompt | null;
+  onChooseIntensity: (val: number) => void;
+  onSkipIntensity: () => void;
   durationTimers: Record<string, number>;
   activeTimers: MutableRefObject<Record<string, boolean>>;
   elapsed: number;
@@ -310,7 +328,9 @@ function BehaviorSetupSection({
   onRemoveBehavior,
   onRecordFrequency,
   onToggleDuration,
-  onSetIntensity,
+  pendingIntensity,
+  onChooseIntensity,
+  onSkipIntensity,
   durationTimers,
   activeTimers,
   elapsed,
@@ -356,6 +376,8 @@ function BehaviorSetupSection({
       {behaviors.map((b) => {
         const isRunning = !!activeTimers.current[b.id];
         const durSec = durationTimers[b.id] || 0;
+        const intensityStats = getBehaviorIntensityStats(b);
+        const intensityBlocked = Boolean(pendingIntensity) && b.category === "challenging";
         return (
           <div
             key={b.id}
@@ -478,15 +500,16 @@ function BehaviorSetupSection({
                   <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                     <button
                       onClick={() => onRecordFrequency(b.id)}
+                      disabled={intensityBlocked}
                       style={{
-                        background: "linear-gradient(135deg, #6366f1, #818cf8)",
-                        color: "white",
+                        background: intensityBlocked ? "#0f172a" : "linear-gradient(135deg, #6366f1, #818cf8)",
+                        color: intensityBlocked ? "#475569" : "white",
                         border: "none",
                         borderRadius: 12,
                         padding: "10px 24px",
                         fontSize: 14,
                         fontWeight: 800,
-                        cursor: "pointer",
+                        cursor: intensityBlocked ? "not-allowed" : "pointer",
                         minWidth: 100,
                       }}
                     >
@@ -507,15 +530,20 @@ function BehaviorSetupSection({
               <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
                 <button
                   onClick={() => onToggleDuration(b.id)}
+                  disabled={intensityBlocked}
                   style={{
-                    background: isRunning ? "linear-gradient(135deg, #f97316, #fb923c)" : "linear-gradient(135deg, #34d399, #6ee7b7)",
-                    color: isRunning ? "white" : "#0f172a",
+                    background: intensityBlocked
+                      ? "#0f172a"
+                      : isRunning
+                        ? "linear-gradient(135deg, #f97316, #fb923c)"
+                        : "linear-gradient(135deg, #34d399, #6ee7b7)",
+                    color: intensityBlocked ? "#475569" : isRunning ? "white" : "#0f172a",
                     border: "none",
                     borderRadius: 12,
                     padding: "10px 20px",
                     fontSize: 13,
                     fontWeight: 800,
-                    cursor: "pointer",
+                    cursor: intensityBlocked ? "not-allowed" : "pointer",
                     minWidth: 100,
                   }}
                 >
@@ -545,14 +573,97 @@ function BehaviorSetupSection({
             )}
 
             {b.category === "challenging" && (
-              <div>
-                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>INTENSITY</div>
-                <IntensityPicker value={b.intensity} onChange={(val) => onSetIntensity(b.id, val)} />
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>INTENSITY SUMMARY</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                  <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>OCCURRENCES</div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: "#f1f5f9", marginTop: 2 }}>{intensityStats.totalOccurrences}</div>
+                  </div>
+                  <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>AVERAGE</div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: "#f1f5f9", marginTop: 2 }}>
+                      {intensityStats.averageIntensity != null ? intensityStats.averageIntensity.toFixed(1) : "-"}
+                    </div>
+                  </div>
+                  <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>HIGHEST</div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: "#f1f5f9", marginTop: 2 }}>
+                      {intensityStats.highestIntensity ?? "-"}
+                    </div>
+                  </div>
+                  <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>TREND</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "#cbd5e1", marginTop: 2 }}>
+                      {intensityStats.trendLabel}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
         );
       })}
+
+      {pendingIntensity && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(2, 6, 23, 0.78)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 120,
+          }}
+        >
+          <div
+            style={{
+              width: "min(100%, 420px)",
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 16,
+              padding: 20,
+              boxShadow: "0 20px 60px rgba(15, 23, 42, 0.55)",
+            }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.08em" }}>
+              INTENSITY RATING
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: "#f1f5f9", marginTop: 6 }}>
+              {pendingIntensity.behaviorLabel}
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+              Rate this {pendingIntensity.occurrenceType === "frequency" ? "occurrence" : "duration segment"}.
+              {pendingIntensity.durationSec != null ? ` Duration: ${fmtDuration(pendingIntensity.durationSec)}` : ""}
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <IntensityPicker value={null} onChange={onChooseIntensity} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+              <button
+                onClick={onSkipIntensity}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #334155",
+                  color: "#cbd5e1",
+                  borderRadius: 10,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Skip
+              </button>
+              <div style={{ fontSize: 12, color: "#64748b", alignSelf: "center" }}>
+                Optional for challenging behaviors.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAddBehavior && (
         <div
@@ -713,6 +824,41 @@ function BehaviorSetupSection({
       )}
     </div>
   );
+}
+
+function normalizeBehaviorList(behaviors: Behavior[] | undefined | null) {
+  return (behaviors || []).map((behavior) => ({
+    ...behavior,
+    occurrences: normalizeBehaviorOccurrences(behavior),
+  }));
+}
+
+function resetBehaviorForNewVisit(behavior: Behavior): Behavior {
+  return {
+    ...behavior,
+    count: 0,
+    intensity: null,
+    occurrences: [],
+    durationSec: undefined,
+  };
+}
+
+function appendBehaviorOccurrence(behavior: Behavior, record: BehaviorOccurrence): Behavior {
+  const occurrences = normalizeBehaviorOccurrences(behavior);
+  return {
+    ...behavior,
+    occurrences: [...occurrences, record],
+    intensity: record.intensity ?? behavior.intensity ?? null,
+  };
+}
+
+function setBehaviorOccurrenceIntensity(behavior: Behavior, timestamp: number, intensity: number | null): Behavior {
+  const records = normalizeBehaviorOccurrences(behavior);
+  return {
+    ...behavior,
+    occurrences: records.map((record) => (record.timestamp === timestamp ? { ...record, intensity } : record)),
+    intensity,
+  };
 }
 
 // --- Active Visit Screen ---
@@ -908,13 +1054,14 @@ function ActiveVisit({
 }) {
   const totalStudents = visit.totalStudents || null;
   const [elapsed, setElapsed] = useState(0);
-  const [behaviors, setBehaviors] = useState<Behavior[]>(visit.behaviors || []);
+  const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
   const [durationTimers, setDurationTimers] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState(visit.notes || "");
   const [recommendations, setRecommendations] = useState(visit.recommendations || "");
   const [implStatus, setImplStatus] = useState(visit.implementationStatus || "");
   const [implNotes, setImplNotes] = useState(visit.implementationNotes || "");
   const [showAddBehavior, setShowAddBehavior] = useState(false);
+  const [pendingIntensity, setPendingIntensity] = useState<PendingIntensityPrompt | null>(null);
   const [customBehavior, setCustomBehavior] = useState<{ label: string; type: string; behaviorType?: BehaviorType }>({
     label: "",
     type: "frequency",
@@ -923,6 +1070,7 @@ function ActiveVisit({
   const startRef = useRef<number>(visit.startTime);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeTimers = useRef<Record<string, boolean>>({});
+  const durationStarts = useRef<Record<string, number>>({});
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
@@ -934,25 +1082,76 @@ function ActiveVisit({
   useBehaviorDurationTimer(activeTimers, setDurationTimers);
 
   const toggleDuration = (bid: string) => {
-    activeTimers.current[bid] = !activeTimers.current[bid];
+    const behavior = behaviors.find((b) => b.id === bid);
+    const isRunning = !!activeTimers.current[bid];
+
+    if (!isRunning) {
+      durationStarts.current[bid] = Date.now();
+      activeTimers.current[bid] = true;
+      setDurationTimers((prev) => ({ ...prev }));
+      return;
+    }
+
+    const startedAt = durationStarts.current[bid] ?? Date.now();
+    const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const timestamp = Date.now();
+    activeTimers.current[bid] = false;
+    delete durationStarts.current[bid];
+    setBehaviors((prev) =>
+      prev.map((b) =>
+        b.id === bid
+          ? appendBehaviorOccurrence(b, {
+              intensity: null,
+              timestamp,
+            })
+          : b
+      )
+    );
+    setPendingIntensity(
+      behavior?.category === "challenging"
+        ? {
+            behaviorId: bid,
+            behaviorLabel: behavior.label,
+            occurrenceType: "duration",
+            timestamp,
+            durationSec,
+          }
+        : null
+    );
     setDurationTimers(prev => ({ ...prev })); // force re-render
   };
 
   const recordFrequency = (bid: string) => {
-    setBehaviors(prev => prev.map(b =>
-      b.id === bid ? { ...b, count: (b.count || 0) + 1 } : b
-    ));
-  };
-
-  const setIntensity = (bid: string, val: number) => {
-    setBehaviors(prev => prev.map(b =>
-      b.id === bid ? { ...b, intensity: val } : b
-    ));
+    const behavior = behaviors.find((b) => b.id === bid);
+    const timestamp = Date.now();
+    setBehaviors((prev) =>
+      prev.map((b) =>
+        b.id === bid
+          ? appendBehaviorOccurrence(
+              { ...b, count: (b.count || 0) + 1 },
+              {
+                intensity: null,
+                timestamp,
+              }
+            )
+          : b
+      )
+    );
+    setPendingIntensity(
+      behavior?.category === "challenging"
+        ? {
+            behaviorId: bid,
+            behaviorLabel: behavior.label,
+            occurrenceType: "frequency",
+            timestamp,
+          }
+        : null
+    );
   };
 
   const addBehaviorFromLibrary = (bDef: Behavior) => {
     if (!behaviors.find(b => b.id === bDef.id)) {
-      setBehaviors(prev => [...prev, { ...bDef, count: 0, intensity: null }]);
+      setBehaviors(prev => [...prev, { ...bDef, count: 0, intensity: null, occurrences: [] }]);
     }
     setShowAddBehavior(false);
   };
@@ -967,6 +1166,7 @@ function ActiveVisit({
       category: customBehavior.behaviorType,
       count: 0,
       intensity: null,
+      occurrences: [],
       custom: true
     };
     setBehaviors(prev => [...prev, nb]);
@@ -977,6 +1177,24 @@ function ActiveVisit({
   const removeBehavior = (bid: string) => {
     setBehaviors(prev => prev.filter(b => b.id !== bid));
     delete activeTimers.current[bid];
+    delete durationStarts.current[bid];
+    if (pendingIntensity?.behaviorId === bid) setPendingIntensity(null);
+  };
+
+  const chooseIntensity = (val: number) => {
+    if (!pendingIntensity) return;
+    setBehaviors((prev) =>
+      prev.map((behavior) =>
+        behavior.id === pendingIntensity.behaviorId
+          ? setBehaviorOccurrenceIntensity(behavior, pendingIntensity.timestamp, val)
+          : behavior
+      )
+    );
+    setPendingIntensity(null);
+  };
+
+  const skipIntensity = () => {
+    setPendingIntensity(null);
   };
 
   const handleComplete = () => {
@@ -1079,7 +1297,9 @@ function ActiveVisit({
         onRemoveBehavior={removeBehavior}
         onRecordFrequency={recordFrequency}
         onToggleDuration={toggleDuration}
-        onSetIntensity={setIntensity}
+        pendingIntensity={pendingIntensity}
+        onChooseIntensity={chooseIntensity}
+        onSkipIntensity={skipIntensity}
         durationTimers={durationTimers}
         activeTimers={activeTimers}
         elapsed={elapsed}
@@ -1128,11 +1348,13 @@ function ActiveFbaVisit({
   const startRef = useRef<number>(visit.startTime);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [behaviors, setBehaviors] = useState<Behavior[]>(visit.behaviors || []);
+  const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
   const [durationTimers, setDurationTimers] = useState<Record<string, number>>({});
   const activeTimers = useRef<Record<string, boolean>>({});
+  const durationStarts = useRef<Record<string, number>>({});
 
   const [showAddBehavior, setShowAddBehavior] = useState(false);
+  const [pendingIntensity, setPendingIntensity] = useState<PendingIntensityPrompt | null>(null);
   const [customBehavior, setCustomBehavior] = useState<{ label: string; type: string; behaviorType?: BehaviorType }>({
     label: "",
     type: "frequency",
@@ -1213,7 +1435,7 @@ function ActiveFbaVisit({
 
   const addBehaviorFromLibrary = (bDef: Behavior) => {
     if (!behaviors.find((b) => b.id === bDef.id)) {
-      setBehaviors((prev) => [...prev, { ...bDef, count: 0, intensity: null }]);
+      setBehaviors((prev) => [...prev, { ...bDef, count: 0, intensity: null, occurrences: [] }]);
     }
     setShowAddBehavior(false);
   };
@@ -1228,6 +1450,7 @@ function ActiveFbaVisit({
       category: customBehavior.behaviorType,
       count: 0,
       intensity: null,
+      occurrences: [],
       custom: true,
     };
     setBehaviors((prev) => [...prev, nb]);
@@ -1238,6 +1461,7 @@ function ActiveFbaVisit({
   const removeBehavior = (bid: string) => {
     setBehaviors((prev) => prev.filter((b) => b.id !== bid));
     delete activeTimers.current[bid];
+    delete durationStarts.current[bid];
     setDurationTimers((prev) => {
       const next = { ...prev };
       delete next[bid];
@@ -1245,23 +1469,91 @@ function ActiveFbaVisit({
     });
     if (selectedLatencyBehaviorId === bid) setSelectedLatencyBehaviorId("");
     if (selectedIntervalBehaviorId === bid) setSelectedIntervalBehaviorId("");
+    if (pendingIntensity?.behaviorId === bid) setPendingIntensity(null);
   };
 
   const recordFrequency = (bid: string) => {
+    const behavior = behaviors.find((b) => b.id === bid);
+    const timestamp = Date.now();
     setBehaviors((prev) =>
-      prev.map((b) => (b.id === bid ? { ...b, count: (b.count || 0) + 1 } : b))
+      prev.map((b) =>
+        b.id === bid
+          ? appendBehaviorOccurrence(
+              { ...b, count: (b.count || 0) + 1 },
+              {
+                intensity: null,
+                timestamp,
+              }
+            )
+          : b
+      )
+    );
+    setPendingIntensity(
+      behavior?.category === "challenging"
+        ? {
+            behaviorId: bid,
+            behaviorLabel: behavior.label,
+            occurrenceType: "frequency",
+            timestamp,
+          }
+        : null
     );
   };
 
   const toggleDuration = (bid: string) => {
-    activeTimers.current[bid] = !activeTimers.current[bid];
+    const behavior = behaviors.find((b) => b.id === bid);
+    const isRunning = !!activeTimers.current[bid];
+
+    if (!isRunning) {
+      durationStarts.current[bid] = Date.now();
+      activeTimers.current[bid] = true;
+      setDurationTimers((prev) => ({ ...prev }));
+      return;
+    }
+
+    const startedAt = durationStarts.current[bid] ?? Date.now();
+    const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const timestamp = Date.now();
+    activeTimers.current[bid] = false;
+    delete durationStarts.current[bid];
+    setBehaviors((prev) =>
+      prev.map((b) =>
+        b.id === bid
+          ? appendBehaviorOccurrence(b, {
+              intensity: null,
+              timestamp,
+            })
+          : b
+      )
+    );
+    setPendingIntensity(
+      behavior?.category === "challenging"
+        ? {
+            behaviorId: bid,
+            behaviorLabel: behavior.label,
+            occurrenceType: "duration",
+            timestamp,
+            durationSec,
+          }
+        : null
+    );
     setDurationTimers((prev) => ({ ...prev })); // force re-render
   };
 
-  const setIntensity = (bid: string, val: number) => {
+  const chooseIntensity = (val: number) => {
+    if (!pendingIntensity) return;
     setBehaviors((prev) =>
-      prev.map((b) => (b.id === bid ? { ...b, intensity: val } : b))
+      prev.map((behavior) =>
+        behavior.id === pendingIntensity.behaviorId
+          ? setBehaviorOccurrenceIntensity(behavior, pendingIntensity.timestamp, val)
+          : behavior
+      )
     );
+    setPendingIntensity(null);
+  };
+
+  const skipIntensity = () => {
+    setPendingIntensity(null);
   };
 
   const startLatency = () => {
@@ -1425,7 +1717,9 @@ function ActiveFbaVisit({
         onRemoveBehavior={removeBehavior}
         onRecordFrequency={recordFrequency}
         onToggleDuration={toggleDuration}
-        onSetIntensity={setIntensity}
+        pendingIntensity={pendingIntensity}
+        onChooseIntensity={chooseIntensity}
+        onSkipIntensity={skipIntensity}
         durationTimers={durationTimers}
         activeTimers={activeTimers}
         elapsed={elapsed}
@@ -1893,12 +2187,24 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
         </div>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-        {(visit.behaviors || []).slice(0, 4).map(b => (
+        {(visit.behaviors || []).slice(0, 4).map(b => {
+          const intensityStats = b.category === "challenging" ? getBehaviorIntensityStats(b) : null;
+          return (
           <span key={b.id} style={{
             background: "#0f172a", border: "1px solid #334155", borderRadius: 6,
             padding: "3px 8px", fontSize: 11, color: "#94a3b8"
-          }}>{b.label}: {b.type === "frequency" ? `${b.count || 0}x` : fmtDuration(b.durationSec || 0)}</span>
-        ))}
+          }}>
+            {b.label}: {b.type === "frequency" ? `${b.count || 0}x` : fmtDuration(b.durationSec || 0)}
+            {b.category === "challenging" && (
+              <span style={{ color: "#64748b" }}>
+                {" "}• {intensityStats?.averageIntensity != null
+                  ? `avg ${intensityStats.averageIntensity.toFixed(1)}`
+                  : "no intensity"}
+              </span>
+            )}
+          </span>
+          );
+        })}
         {(visit.behaviors || []).length > 4 && (
           <span style={{ color: "#475569", fontSize: 11, padding: "3px 8px" }}>+{(visit.behaviors || []).length - 4} more</span>
         )}
@@ -1944,7 +2250,7 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, marginBottom: 10 }}>BEHAVIORS</div>
           {(visit.behaviors || []).map(b => {
-            const intLevel = INTENSITY_LEVELS.find(l => l.value === b.intensity);
+            const intensityStats = getBehaviorIntensityStats(b);
             return (
               <div key={b.id} style={{
                 background: "#0f172a", borderRadius: 10, padding: 12, marginBottom: 8,
@@ -1952,7 +2258,11 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
               }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0" }}>{b.label}</div>
-                  <Badge color={b.type === "frequency" ? "#818cf8" : "#34d399"}>{b.type}</Badge>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                    <Badge color={b.type === "frequency" ? "#818cf8" : "#34d399"}>{b.type}</Badge>
+                    {b.category === "positive" && <Badge color="#4ade80">Positive</Badge>}
+                    {b.category === "challenging" && <Badge color="#f87171">Challenging</Badge>}
+                  </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 18, fontWeight: 800, color: "#f1f5f9" }}>
@@ -1967,8 +2277,33 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
                           : calcRate(b.count || 0, visit.totalDuration || 0))
                       : `${Math.round(((b.durationSec || 0) / (visit.totalDuration || 1)) * 100)}% of visit`}
                   </div>
-                  {intLevel && <div style={{ fontSize: 11, color: intLevel.color, marginTop: 2 }}>{intLevel.label}</div>}
                 </div>
+                {b.category === "challenging" && (
+                  <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                    <div style={{ background: "#111827", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>OCCURRENCES</div>
+                      <div style={{ fontSize: 16, color: "#f1f5f9", fontWeight: 900, marginTop: 2 }}>{intensityStats.totalOccurrences}</div>
+                    </div>
+                    <div style={{ background: "#111827", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>AVERAGE</div>
+                      <div style={{ fontSize: 16, color: "#f1f5f9", fontWeight: 900, marginTop: 2 }}>
+                        {intensityStats.averageIntensity != null ? intensityStats.averageIntensity.toFixed(1) : "-"}
+                      </div>
+                    </div>
+                    <div style={{ background: "#111827", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>HIGHEST</div>
+                      <div style={{ fontSize: 16, color: "#f1f5f9", fontWeight: 900, marginTop: 2 }}>
+                        {intensityStats.highestIntensity ?? "-"}
+                      </div>
+                    </div>
+                    <div style={{ background: "#111827", border: "1px solid #334155", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800 }}>TREND</div>
+                      <div style={{ fontSize: 13, color: "#cbd5e1", fontWeight: 700, marginTop: 2 }}>
+                        {buildIntensityTrendLabel(intensityStats.trendValues)}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2384,6 +2719,7 @@ function PageInner() {
             intervalRecords: v.interval_records ?? v.intervalRecords,
             intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
             fbaIntervalSessions: v.fba_interval_sessions ?? v.fbaIntervalSessions,
+            behaviors: normalizeBehaviorList(v.behaviors ?? v.behaviors),
             startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
             endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
             totalDuration: v.total_duration ?? v.totalDuration,
@@ -2432,7 +2768,7 @@ function PageInner() {
             const allowedBehaviorIds = new Set(BEHAVIOR_LIBRARY[newVisitForm.type].map(b => b.id));
             return (prevVisits[0].behaviors || [])
               .filter(b => allowedBehaviorIds.has(b.id))
-              .map(b => ({ ...b, count: 0, intensity: null, durationSec: undefined }));
+              .map((b) => resetBehaviorForNewVisit(b));
           })()
           : [];
 

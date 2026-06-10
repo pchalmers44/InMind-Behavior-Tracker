@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { buildIntensityTrendLabel, normalizeBehaviorOccurrences } from "@/lib/behavior-intensity";
 
 type Behavior = {
   id: string;
@@ -10,6 +11,9 @@ type Behavior = {
   type: string;
   category?: "positive" | "challenging";
   count?: number;
+  intensity?: number | null;
+  occurrences?: unknown;
+  intensityRecords?: unknown;
   durationSec?: number;
 };
 
@@ -263,6 +267,18 @@ export default function FbaReportsPage() {
         .filter((b) => b.type === "duration" && (!hasBehaviorFilter || b.label === behaviorFilter))
         .reduce((sum, b) => sum + (b.durationSec || 0), 0);
 
+      const intensityRecords = behaviors
+        .filter((b) => !hasBehaviorFilter || b.label === behaviorFilter)
+        .flatMap((b) => normalizeBehaviorOccurrences(b));
+      const intensityValues = intensityRecords
+        .map((record) => record.intensity)
+        .filter((intensity): intensity is number => typeof intensity === "number" && Number.isFinite(intensity));
+      const intensityAvg =
+        intensityValues.length > 0 ? intensityValues.reduce((sum, value) => sum + value, 0) / intensityValues.length : null;
+      const intensityHigh = intensityValues.length > 0 ? Math.max(...intensityValues) : null;
+      const intensityLow = intensityValues.length > 0 ? Math.min(...intensityValues) : null;
+      const intensityTrend = buildIntensityTrendLabel(intensityValues);
+
       const latencyEvents = (s.fba_latency_events || []) as FbaLatencyEvent[];
       const latencyFiltered = latencyEvents.filter((e) => !hasBehaviorFilter || e.behaviorLabel === behaviorFilter);
       const avgLatency =
@@ -284,6 +300,12 @@ export default function FbaReportsPage() {
         abcEntries: abc,
         freqTotal,
         durationTotalSec,
+        intensityTotal: intensityRecords.length,
+        intensityRated: intensityValues.length,
+        intensityAvg,
+        intensityHigh,
+        intensityLow,
+        intensityTrend,
         avgLatencySec: avgLatency,
         intervalPct,
         intervalTotal,
@@ -295,6 +317,7 @@ export default function FbaReportsPage() {
       charts: {
         freq: perSession.map((p) => p.freqTotal),
         duration: perSession.map((p) => p.durationTotalSec),
+        intensity: perSession.map((p) => p.intensityAvg ?? 0),
         latency: perSession.map((p) => p.avgLatencySec),
         intervalPct: perSession.map((p) => Math.round(p.intervalPct * 100)),
         labels: perSession.map((p) => p.startLabel || ""),
@@ -448,22 +471,53 @@ export default function FbaReportsPage() {
                           <div className="text-[10px] font-bold tracking-widest text-slate-500">FREQ</div>
                           <div className="text-lg font-extrabold text-indigo-300">{s.freqTotal}</div>
                         </div>
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
-                          <div className="text-[10px] font-bold tracking-widest text-slate-500">DUR</div>
-                          <div className="text-lg font-extrabold text-emerald-300">{formatSeconds(s.durationTotalSec)}</div>
-                        </div>
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
-                          <div className="text-[10px] font-bold tracking-widest text-slate-500">LAT</div>
-                          <div className="text-lg font-extrabold text-amber-300">{formatSeconds(s.avgLatencySec)}</div>
-                        </div>
-                        <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
-                          <div className="text-[10px] font-bold tracking-widest text-slate-500">INT</div>
-                          <div className="text-lg font-extrabold text-rose-300">
-                            {Math.round(clamp01(s.intervalPct) * 100)}%
-                          </div>
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">DUR</div>
+                        <div className="text-lg font-extrabold text-emerald-300">{formatSeconds(s.durationTotalSec)}</div>
+                      </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
+                      <div className="text-[10px] font-bold tracking-widest text-slate-500">INT AVG</div>
+                      <div className="text-lg font-extrabold text-rose-300">
+                        {s.intensityAvg != null ? s.intensityAvg.toFixed(1) : "-"}
+                      </div>
+                    </div>
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">LAT</div>
+                        <div className="text-lg font-extrabold text-amber-300">{formatSeconds(s.avgLatencySec)}</div>
+                      </div>
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">INT</div>
+                        <div className="text-lg font-extrabold text-rose-300">
+                          {Math.round(clamp01(s.intervalPct) * 100)}%
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  {s.intensityTotal > 0 && (
+                    <div className="mt-4 grid gap-2 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:grid-cols-4">
+                      <div>
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">INT OCCURRENCES</div>
+                        <div className="mt-1 text-sm font-extrabold text-slate-100">{s.intensityTotal}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">HIGH</div>
+                        <div className="mt-1 text-sm font-extrabold text-slate-100">
+                          {s.intensityHigh != null ? s.intensityHigh : "-"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">LOW</div>
+                        <div className="mt-1 text-sm font-extrabold text-slate-100">
+                          {s.intensityLow != null ? s.intensityLow : "-"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold tracking-widest text-slate-500">TREND</div>
+                        <div className="mt-1 text-sm font-extrabold text-slate-100">{s.intensityTrend}</div>
+                      </div>
+                    </div>
+                  )}
 
                     {s.abcEntries.length > 0 && (
                       <div className="mt-4 grid gap-2">
@@ -501,4 +555,3 @@ export default function FbaReportsPage() {
     </div>
   );
 }
-
