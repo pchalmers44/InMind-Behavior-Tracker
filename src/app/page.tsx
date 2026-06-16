@@ -2672,6 +2672,17 @@ function PageInner() {
   const isFirstVisitFromUrl =
     urlFirstVisitParam === "true" ? true : urlFirstVisitParam === "false" ? false : undefined;
   const newVisitStep = (searchParams.get("step") === "details" ? "details" : "firstVisit") as "firstVisit" | "details";
+  const selectedFirstVisit = isFirstVisitFromUrl ?? newVisitForm.isFirstVisit;
+
+  const handleFirstVisitChange = (val: boolean) => {
+    setNewVisitForm((prev) => ({
+      ...prev,
+      isFirstVisit: val,
+      ...(val === false ? { subjectName: "" } : {}),
+    }));
+    if (val === true) setImplementationStatus("");
+    router.push(`/?step=details&firstVisit=${val}`);
+  };
 
   useEffect(() => {
     const logSupabaseError = (label: string, error: any) => {
@@ -2747,8 +2758,8 @@ function PageInner() {
   const startVisit = () => {
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
     if (!newVisitForm.grade) return;
-    if (isFirstVisitFromUrl === undefined) return;
-    if (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus) return;
+    if (selectedFirstVisit === undefined) return;
+    if (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus) return;
     if (!newVisitForm.selectedDistrict) return;
     const districtValue =
       newVisitForm.selectedDistrict === "Other" ? newVisitForm.customDistrict.trim() : newVisitForm.selectedDistrict;
@@ -2783,8 +2794,8 @@ function PageInner() {
       totalStudents: newVisitForm.type === "classroom" ? (parseInt(newVisitForm.totalStudents) || null) : null,
       startTime: Date.now(),
       behaviors: prevBehaviors,
-      isFirstVisit: isFirstVisitFromUrl,
-      implementationStatus: newVisitForm.type !== "fba" && isFirstVisitFromUrl === false ? implementationStatus : undefined,
+      isFirstVisit: selectedFirstVisit,
+      implementationStatus: newVisitForm.type !== "fba" && selectedFirstVisit === false ? implementationStatus : undefined,
       prevVisit: prevVisits[0] || null
     } as any;
     setActiveVisit(visit);
@@ -2988,12 +2999,8 @@ function PageInner() {
             {newVisitStep === "firstVisit" && (
               <>
                 <FirstVisitSelector
-                  value={isFirstVisitFromUrl}
-                  onChange={(val) => {
-                    if (val === true) setImplementationStatus("");
-                    if (val === false) setNewVisitForm(p => ({ ...p, subjectName: "" }));
-                    router.push(`/?step=details&firstVisit=${val}`);
-                  }}
+                  value={selectedFirstVisit}
+                  onChange={handleFirstVisitChange}
                 />
               </>
             )}
@@ -3001,12 +3008,8 @@ function PageInner() {
             {newVisitStep === "details" && (
               <>
                 <FirstVisitSelector
-                  value={isFirstVisitFromUrl}
-                  onChange={(val) => {
-                    if (val === true) setImplementationStatus("");
-                    if (val === false) setNewVisitForm(p => ({ ...p, subjectName: "" }));
-                    router.push(`/?step=details&firstVisit=${val}`);
-                  }}
+                  value={selectedFirstVisit}
+                  onChange={handleFirstVisitChange}
                 />
 
                 <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -3015,10 +3018,10 @@ function PageInner() {
                   key={t}
                   onClick={() => {
                     setImplementationStatus("");
-                    setNewVisitForm(p => ({
+                      setNewVisitForm(p => ({
                       ...p,
                       type: t,
-                      ...(isFirstVisitFromUrl === false ? { subjectName: "" } : {})
+                      ...(selectedFirstVisit === false ? { subjectName: "" } : {})
                     }));
                   }}
                   style={{
@@ -3044,7 +3047,7 @@ function PageInner() {
             ] as const).map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>{f.label.toUpperCase()}</div>
-                {f.key === "subjectName" && isFirstVisitFromUrl === false && subjectNameOptions.length > 0 ? (
+                {f.key === "subjectName" && selectedFirstVisit === false && subjectNameOptions.length > 0 ? (
                   <SearchableSelect
                     options={subjectNameOptions}
                     value={newVisitForm.subjectName}
@@ -3063,7 +3066,7 @@ function PageInner() {
                     }}
                   />
                 )}
-                {f.key === "subjectName" && isFirstVisitFromUrl === false && subjectNameOptions.length === 0 && (
+                {f.key === "subjectName" && selectedFirstVisit === false && subjectNameOptions.length === 0 && (
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
                     No previous names found yet - free entry is enabled for now.
                   </div>
@@ -3190,7 +3193,7 @@ function PageInner() {
               </div>
             )}
 
-            {isFirstVisitFromUrl === false && newVisitForm.type !== "fba" && (
+            {selectedFirstVisit === false && newVisitForm.type !== "fba" && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
                   Did the teacher implement previous feedback/interventions?
@@ -3243,15 +3246,15 @@ function PageInner() {
                 !newVisitForm.selectedDistrict ||
                 (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) ||
                 !newVisitForm.schoolName.trim() ||
-                isFirstVisitFromUrl === undefined ||
-                (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus)
+                selectedFirstVisit === undefined ||
+                (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus)
               }
               style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus))
+                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || selectedFirstVisit === undefined || (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus))
                   ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus)) ? "#475569" : "#0f172a",
+                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || selectedFirstVisit === undefined || (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus)) ? "#475569" : "#0f172a",
                 border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || isFirstVisitFromUrl === undefined || (newVisitForm.type !== "fba" && isFirstVisitFromUrl === false && !implementationStatus)) ? "not-allowed" : "pointer"
+                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || selectedFirstVisit === undefined || (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus)) ? "not-allowed" : "pointer"
               }}>Start Observation</button>
               </>
             )}
