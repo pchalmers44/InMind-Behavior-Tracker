@@ -88,6 +88,9 @@ type DataState = {
   subjects: string[];
 };
 
+type ReportScope = "district" | "school";
+type ReportDatePreset = "last7" | "last30" | "last90" | "schoolYear" | "custom";
+
 type NewVisitFormState = {
   type: "student" | "classroom" | "fba";
   subjectName: string;
@@ -2326,69 +2329,354 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
   );
 }
 
+type ReportChartDatum = {
+  label: string;
+  value: number;
+  color?: string;
+};
+
+type ReportDateRange = {
+  startDate?: string;
+  endDate?: string;
+};
+
+type ReportMetadata = {
+  reportScope: string;
+  district: string;
+  school: string;
+  dateRange: string;
+  totalVisits: number;
+  generatedOn: string;
+};
+
+function normalizeReportOption(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function uniqueReportOptions(values: Array<string | null | undefined>) {
+  const map = new Map<string, string>();
+  for (const value of values) {
+    const raw = (value || "").trim();
+    if (!raw) continue;
+    const key = normalizeReportOption(raw);
+    if (!map.has(key)) map.set(key, raw);
+  }
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function getDistrictOptionsFromVisits(visits: Visit[]) {
+  return uniqueReportOptions(visits.map((visit) => visit.district));
+}
+
+function getSchoolOptionsForDistrict(visits: Visit[], district: string) {
+  if (!district.trim()) return [];
+  return uniqueReportOptions(
+    visits
+      .filter((visit) => visit.district === district)
+      .map((visit) => visit.schoolName)
+  );
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatReportDisplayDate(value: string | undefined) {
+  if (!value) return "";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+
+function getReportDateRangeLabel(preset: ReportDatePreset, dateRange: ReportDateRange) {
+  if (preset === "last7") return "Last 7 Days";
+  if (preset === "last30") return "Last 30 Days";
+  if (preset === "last90") return "Last 90 Days";
+  if (preset === "schoolYear") return "This School Year";
+  const start = formatReportDisplayDate(dateRange.startDate);
+  const end = formatReportDisplayDate(dateRange.endDate);
+  if (start && end) return `${start} - ${end}`;
+  if (start) return `${start} - Present`;
+  if (end) return `Through ${end}`;
+  return "Custom Range";
+}
+
+function formatReportGeneratedOn(date: Date) {
+  return date.toLocaleString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getReportDateRange(preset: ReportDatePreset, customStartDate: string, customEndDate: string): ReportDateRange {
+  if (preset === "custom") {
+    return {
+      startDate: customStartDate || undefined,
+      endDate: customEndDate || undefined,
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(today);
+  const end = new Date(today);
+
+  if (preset === "last7") start.setDate(today.getDate() - 6);
+  if (preset === "last30") start.setDate(today.getDate() - 29);
+  if (preset === "last90") start.setDate(today.getDate() - 89);
+  if (preset === "schoolYear") {
+    const schoolYearStartMonth = 6; // July, zero-indexed.
+    const startYear = today.getMonth() >= schoolYearStartMonth ? today.getFullYear() : today.getFullYear() - 1;
+    start.setFullYear(startYear, schoolYearStartMonth, 1);
+  }
+
+  return {
+    startDate: formatDateInput(start),
+    endDate: formatDateInput(end),
+  };
+}
+
+function getVisitStartMs(visit: Pick<Visit, "startTime">) {
+  const raw = visit.startTime;
+  if (!raw) return null;
+  const numeric = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : raw;
+  const ms = new Date(numeric).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isVisitInReportDateRange(visit: Pick<Visit, "startTime">, dateRange: ReportDateRange) {
+  const startMs = dateRange.startDate ? new Date(`${dateRange.startDate}T00:00:00`).getTime() : undefined;
+  const endMs = dateRange.endDate ? new Date(`${dateRange.endDate}T23:59:59.999`).getTime() : undefined;
+  if (startMs == null && endMs == null) return true;
+  const visitMs = getVisitStartMs(visit);
+  if (visitMs == null) return false;
+  if (startMs != null && visitMs < startMs) return false;
+  if (endMs != null && visitMs > endMs) return false;
+  return true;
+}
+
+function filterOrganizationalReportVisits(
+  visits: Visit[],
+  scope: ReportScope,
+  district: string,
+  school: string,
+  dateRange: ReportDateRange
+) {
+  if (!district.trim()) return [];
+  return visits.filter((visit) => {
+    if (visit.district !== district) return false;
+    if (scope === "school" && school && visit.schoolName !== school) return false;
+    return isVisitInReportDateRange(visit, dateRange);
+  });
+}
+
+function ReportMetadataCard({ metadata }: { metadata: ReportMetadata }) {
+  const rows = [
+    { label: "Report Scope", value: metadata.reportScope },
+    { label: "District", value: metadata.district || "Select a district" },
+    { label: "School", value: metadata.school },
+    { label: "Date Range", value: metadata.dateRange },
+    { label: "Total Visits", value: metadata.totalVisits },
+    { label: "Generated On", value: metadata.generatedOn },
+  ];
+
+  return (
+    <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, border: "1px solid #334155", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 4, textTransform: "uppercase" }}>{metadata.reportScope} Report</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: "#f1f5f9" }}>{metadata.district || "No district selected"}</div>
+          <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 2 }}>{metadata.school} | {metadata.dateRange}</div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+        {rows.map((row) => (
+          <div key={row.label} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ color: "#64748b", fontSize: 10, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase" }}>{row.label}</div>
+            <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 700, marginTop: 4 }}>{row.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReportBarChart({ title, data }: { title: string; data: ReportChartDatum[] }) {
+  const max = Math.max(1, ...data.map((d) => d.value));
+
+  return (
+    <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, border: "1px solid #334155" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 12, textTransform: "uppercase" }}>{title}</div>
+      {data.length === 0 ? (
+        <div style={{ color: "#475569", fontSize: 13, padding: "8px 0" }}>No data yet.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {data.map((d) => (
+            <div key={d.label}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 5 }}>
+                <div style={{ color: "#e2e8f0", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.label}</div>
+                <div style={{ color: d.color || "#38bdf8", fontSize: 12, fontWeight: 800 }}>{d.value}</div>
+              </div>
+              <div style={{ height: 8, background: "#0f172a", borderRadius: 999, overflow: "hidden" }}>
+                <div style={{ width: `${Math.max(4, (d.value / max) * 100)}%`, height: "100%", background: d.color || "#38bdf8", borderRadius: 999 }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Reports View ---
 function Reports({ visits }: { visits: Visit[] }) {
   const [filter, setFilter] = useState("all");
   const [selectedSubject, setSelectedSubject] = useState("all");
-  const [studentFilter, setStudentFilter] = useState("");
-  const [teacherFilter, setTeacherFilter] = useState("");
+  const [reportScope, setReportScope] = useState<ReportScope>("district");
   const [schoolFilter, setSchoolFilter] = useState("");
   const [districtFilter, setDistrictFilter] = useState("");
+  const [datePreset, setDatePreset] = useState<ReportDatePreset>("last30");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
   // FBA observations are excluded from aggregated reports (school/district/teacher trends).
   const reportableVisits = useMemo(() => visits.filter((v) => v.type !== "fba"), [visits]);
 
-  const optionSets = useMemo(() => {
-    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
-    const unique = (vals: string[]) => {
-      const m = new Map<string, string>();
-      for (const v of vals) {
-        const raw = (v || "").trim();
-        if (!raw) continue;
-        const k = norm(raw);
-        if (!m.has(k)) m.set(k, raw);
-      }
-      return Array.from(m.values()).sort((a, b) => a.localeCompare(b));
-    };
+  const districtOptions = useMemo(() => getDistrictOptionsFromVisits(reportableVisits), [reportableVisits]);
+  const scopedSchoolOptions = useMemo(
+    () => getSchoolOptionsForDistrict(reportableVisits, districtFilter),
+    [districtFilter, reportableVisits]
+  );
+  const isOrganizationalScope = reportScope === "district" || reportScope === "school";
+  const reportDateRange = useMemo(
+    () => getReportDateRange(datePreset, customStartDate, customEndDate),
+    [customEndDate, customStartDate, datePreset]
+  );
+  const reportDateRangeLabel = useMemo(
+    () => getReportDateRangeLabel(datePreset, reportDateRange),
+    [datePreset, reportDateRange]
+  );
+  const selectedReportVisits = useMemo(
+    () => filterOrganizationalReportVisits(reportableVisits, reportScope, districtFilter, schoolFilter, reportDateRange),
+    [districtFilter, reportDateRange, reportScope, reportableVisits, schoolFilter]
+  );
+  const reportMetadata = useMemo<ReportMetadata>(() => ({
+    reportScope: reportScope === "school" ? "School" : "District",
+    district: districtFilter,
+    school: reportScope === "school" && schoolFilter ? schoolFilter : "All Schools",
+    dateRange: reportDateRangeLabel,
+    totalVisits: selectedReportVisits.length,
+    generatedOn: formatReportGeneratedOn(new Date()),
+  }), [districtFilter, reportDateRangeLabel, reportScope, schoolFilter, selectedReportVisits.length]);
 
-    const students: string[] = [];
-    const teachers: string[] = [];
-    const schools: string[] = [];
-    const districts: string[] = [];
+  const organizationalSummaryCards = useMemo(() => {
+    if (reportScope !== "district" && reportScope !== "school") return [];
 
-    for (const v of reportableVisits) {
-      if (v.type === "student") students.push(v.subjectName);
-      if (v.type === "classroom") teachers.push(v.subjectName);
-      if (v.schoolName) schools.push(v.schoolName);
-      if (v.district) districts.push(v.district);
+    const teachers = new Set(selectedReportVisits.filter((v) => v.type === "classroom").map((v) => v.subjectName).filter(Boolean));
+    const students = new Set(selectedReportVisits.filter((v) => v.type === "student").map((v) => v.subjectName).filter(Boolean));
+    const schools = new Set(selectedReportVisits.map((v) => v.schoolName || "").filter(Boolean));
+    const averageDuration = selectedReportVisits.length
+      ? Math.round(selectedReportVisits.reduce((sum, v) => sum + (v.totalDuration || 0), 0) / selectedReportVisits.length)
+      : 0;
+
+    if (reportScope === "district") {
+      return [
+        { label: "Total Schools", value: schools.size, color: "#38bdf8" },
+        { label: "Total Teachers", value: teachers.size, color: "#818cf8" },
+        { label: "Total Students", value: students.size, color: "#34d399" },
+        { label: "Total Observations", value: selectedReportVisits.length, color: "#f59e0b" },
+      ];
     }
 
-    return {
-      students: unique(students),
-      teachers: unique(teachers),
-      schools: unique(schools),
-      districts: unique(districts),
-    };
-  }, [reportableVisits]);
+    return [
+      { label: "Total Teachers", value: teachers.size, color: "#38bdf8" },
+      { label: "Total Students", value: students.size, color: "#34d399" },
+      { label: "Total Observations", value: selectedReportVisits.length, color: "#f59e0b" },
+      { label: "Avg. Duration", value: fmtDuration(averageDuration), color: "#818cf8" },
+    ];
+  }, [reportScope, selectedReportVisits]);
 
-  const downloadReport = async () => {
+  const organizationalChartData = useMemo(() => {
+    if (reportScope !== "district" && reportScope !== "school") return null;
+
+    const schoolCounts = new Map<string, number>();
+    const typeCounts = new Map<string, number>([
+      ["Student", 0],
+      ["Classroom", 0],
+    ]);
+    const implementationCounts = new Map<string, number>();
+    const behaviorCounts = new Map<string, number>();
+    let positive = 0;
+    let challenging = 0;
+
+    for (const visit of selectedReportVisits) {
+      if (visit.schoolName) schoolCounts.set(visit.schoolName, (schoolCounts.get(visit.schoolName) || 0) + 1);
+      typeCounts.set(visit.type === "classroom" ? "Classroom" : "Student", (typeCounts.get(visit.type === "classroom" ? "Classroom" : "Student") || 0) + 1);
+      const implementation = visit.implementationStatus
+        ? `${visit.implementationStatus.charAt(0).toUpperCase()}${visit.implementationStatus.slice(1)}`
+        : "None";
+      implementationCounts.set(implementation, (implementationCounts.get(implementation) || 0) + 1);
+
+      for (const behavior of visit.behaviors || []) {
+        const amount = behavior.type === "duration" ? (behavior.durationSec || 0) : (behavior.count || 0);
+        if (behavior.category === "positive") positive += amount;
+        if (behavior.category === "challenging") challenging += amount;
+        behaviorCounts.set(behavior.label, (behaviorCounts.get(behavior.label) || 0) + amount);
+      }
+    }
+
+    const toData = (map: Map<string, number>, limit?: number) =>
+      Array.from(map.entries())
+        .map(([label, value]) => ({ label, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+
+    return {
+      observationsBySchool: toData(schoolCounts),
+      behaviorBalance: [
+        { label: "Positive", value: positive, color: "#34d399" },
+        { label: "Challenging", value: challenging, color: "#f87171" },
+      ].filter((d) => d.value > 0),
+      observationTypes: toData(typeCounts).map((d) => ({ ...d, color: d.label === "Student" ? "#38bdf8" : "#818cf8" })),
+      implementationStatus: toData(implementationCounts).map((d) => ({
+        ...d,
+        color: d.label === "Fully" ? "#4ade80" : d.label === "Partially" ? "#facc15" : d.label === "Not" ? "#f87171" : "#64748b",
+      })),
+      frequentBehaviors: toData(behaviorCounts, 8),
+    };
+  }, [reportScope, selectedReportVisits]);
+
+  const downloadReport = async (format: "xlsx" | "csv" = "xlsx") => {
     setDownloading(true);
     setReportError(null);
     try {
+      if ((reportScope === "district" || reportScope === "school") && !districtFilter.trim()) {
+        throw new Error("Select a district before downloading this report.");
+      }
       const params = new URLSearchParams();
-      if (studentFilter.trim()) params.set("student", studentFilter.trim());
-      if (teacherFilter.trim()) params.set("teacher", teacherFilter.trim());
-      if (schoolFilter) params.set("school", schoolFilter);
-      if (districtFilter) params.set("district", districtFilter);
+      if ((reportScope === "district" || reportScope === "school") && districtFilter) params.set("district", districtFilter);
+      if (reportScope === "school" && schoolFilter) params.set("school", schoolFilter);
+      if (reportDateRange.startDate) params.set("startDate", reportDateRange.startDate);
+      if (reportDateRange.endDate) params.set("endDate", reportDateRange.endDate);
+      params.set("dateRangeLabel", reportDateRangeLabel);
+      if (format === "csv") params.set("format", "csv");
 
       const res = await fetch(`/api/reports?${params.toString()}`, { method: "GET" });
       if (!res.ok) throw new Error(`Report request failed (${res.status})`);
 
       const blob = await res.blob();
-      const filename = "observations-report.xlsx";
-      const nav = window.navigator as any;
+      const filename = `observations-report.${format === "csv" ? "csv" : "xlsx"}`;
+      const nav = window.navigator as Navigator & {
+        msSaveOrOpenBlob?: (blob: Blob, defaultName?: string) => boolean;
+      };
       if (typeof nav?.msSaveOrOpenBlob === "function") {
         nav.msSaveOrOpenBlob(blob, filename);
       } else {
@@ -2445,73 +2733,115 @@ function Reports({ visits }: { visits: Visit[] }) {
         marginBottom: 16
       }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 10 }}>
-          EXCEL REPORT
+          REPORT EXPORT
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>STUDENT</div>
-            <input
-              list="report-students"
-              value={studentFilter}
-              onChange={e => setStudentFilter(e.target.value)}
-              placeholder="Search student..."
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>REPORT SCOPE</div>
+            <select
+              value={reportScope}
+              onChange={e => {
+                setReportScope(e.target.value as ReportScope);
+                setSchoolFilter("");
+                setDistrictFilter("");
+              }}
               style={{
                 width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
                 color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
                 fontFamily: "inherit"
               }}
-            />
-            <datalist id="report-students">
-              {optionSets.students.map(s => <option key={s} value={s} />)}
-            </datalist>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>TEACHER</div>
-            <input
-              list="report-teachers"
-              value={teacherFilter}
-              onChange={e => setTeacherFilter(e.target.value)}
-              placeholder="Search teacher..."
-              style={{
-                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
-                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
-                fontFamily: "inherit"
-              }}
-            />
-            <datalist id="report-teachers">
-              {optionSets.teachers.map(t => <option key={t} value={t} />)}
-            </datalist>
+            >
+              <option value="district">District</option>
+              <option value="school">School</option>
+            </select>
           </div>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DISTRICT</div>
             <select
               value={districtFilter}
-              onChange={e => setDistrictFilter(e.target.value)}
+              onChange={e => {
+                setDistrictFilter(e.target.value);
+                setSchoolFilter("");
+              }}
               style={{
                 width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
                 color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
                 fontFamily: "inherit"
               }}
             >
-              <option value="">All</option>
-              {optionSets.districts.map(d => <option key={d} value={d}>{d}</option>)}
+              <option value="">Select district...</option>
+              {districtOptions.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
+          {reportScope === "school" && (
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>SCHOOL</div>
             <select
               value={schoolFilter}
               onChange={e => setSchoolFilter(e.target.value)}
+              disabled={!districtFilter}
+              style={{
+                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: districtFilter ? "#e2e8f0" : "#475569", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit", cursor: districtFilter ? "pointer" : "not-allowed"
+              }}
+            >
+              <option value="">{districtFilter ? "All Schools" : "Select a district first"}</option>
+              {scopedSchoolOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            {districtFilter && scopedSchoolOptions.length === 0 && (
+              <div style={{ color: "#64748b", fontSize: 11, marginTop: 4 }}>No schools found for this district.</div>
+            )}
+          </div>
+          )}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DATE RANGE</div>
+            <select
+              value={datePreset}
+              onChange={e => setDatePreset(e.target.value as ReportDatePreset)}
               style={{
                 width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
                 color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
                 fontFamily: "inherit"
               }}
             >
-              <option value="">All</option>
-              {optionSets.schools.map(s => <option key={s} value={s}>{s}</option>)}
+              <option value="last7">Last 7 Days</option>
+              <option value="last30">Last 30 Days</option>
+              <option value="last90">Last 90 Days</option>
+              <option value="schoolYear">This School Year</option>
+              <option value="custom">Custom Range</option>
             </select>
           </div>
+          {datePreset === "custom" && (
+            <>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>START DATE</div>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={e => setCustomStartDate(e.target.value)}
+                  style={{
+                    width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>END DATE</div>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={e => setCustomEndDate(e.target.value)}
+                  style={{
+                    width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                    color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                    fontFamily: "inherit"
+                  }}
+                />
+              </div>
+            </>
+          )}
         </div>
         {reportError && (
           <div style={{
@@ -2526,25 +2856,72 @@ function Reports({ visits }: { visits: Visit[] }) {
             {reportError}
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
           <button
-            onClick={downloadReport}
-            disabled={downloading}
+            onClick={() => downloadReport("xlsx")}
+            disabled={downloading || (isOrganizationalScope && !districtFilter.trim())}
             style={{
-              background: downloading ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-              color: downloading ? "#475569" : "#0f172a",
+              background: (downloading || (isOrganizationalScope && !districtFilter.trim())) ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
+              color: (downloading || (isOrganizationalScope && !districtFilter.trim())) ? "#475569" : "#0f172a",
               border: "none",
               borderRadius: 10,
               padding: "10px 14px",
               fontSize: 13,
               fontWeight: 900,
-              cursor: downloading ? "not-allowed" : "pointer",
+              cursor: (downloading || (isOrganizationalScope && !districtFilter.trim())) ? "not-allowed" : "pointer",
             }}
           >
-            {downloading ? "Generating..." : "Download Report"}
+            {downloading ? "Generating..." : "Generate Report"}
           </button>
+          {isOrganizationalScope && (
+            <button
+              onClick={() => downloadReport("csv")}
+              disabled={downloading || !districtFilter.trim()}
+              style={{
+                background: "#0f172a",
+                color: (downloading || !districtFilter.trim()) ? "#475569" : "#e2e8f0",
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: "10px 14px",
+                fontSize: 13,
+                fontWeight: 900,
+                cursor: (downloading || !districtFilter.trim()) ? "not-allowed" : "pointer",
+              }}
+            >
+              {downloading ? "Generating..." : "Download CSV"}
+            </button>
+          )}
         </div>
       </div>
+
+      <ReportMetadataCard metadata={reportMetadata} />
+
+      {organizationalSummaryCards.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 20 }}>
+          {organizationalSummaryCards.map(c => (
+            <div key={c.label} style={{
+              background: "#1e293b", borderRadius: 12, padding: 14, border: "1px solid #334155"
+            }}>
+              <div style={{ fontSize: 24, fontWeight: 900, color: c.color }}>{c.value}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{c.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {organizationalChartData && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 20 }}>
+          {reportScope === "district" && (
+            <ReportBarChart title="Observations by School" data={organizationalChartData.observationsBySchool} />
+          )}
+          <ReportBarChart title="Positive vs Challenging Behaviors" data={organizationalChartData.behaviorBalance} />
+          <ReportBarChart title="Observation Types" data={organizationalChartData.observationTypes} />
+          <ReportBarChart title="Implementation Status" data={organizationalChartData.implementationStatus} />
+          {reportScope === "school" && (
+            <ReportBarChart title="Most Frequent Behaviors" data={organizationalChartData.frequentBehaviors} />
+          )}
+        </div>
+      )}
 
       <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9", marginBottom: 20 }}>Reports & Trends</div>
 
