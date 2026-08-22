@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 type VisitRow = {
   type: string | null;
@@ -163,22 +164,24 @@ function filterReportVisits(rows: VisitRow[], scope: ReportScope, district: stri
   });
 }
 
-async function loadDistrictOptions() {
+async function loadDistrictOptions(userId: string) {
   const { data, error } = await supabase
     .from("visits")
     .select("district")
+    .eq("created_by", userId)
     .limit(10000);
 
   if (error) throw error;
   return getUniqueDistricts((data || []) as VisitRow[]);
 }
 
-async function loadVisitsForDistrict(district: string) {
+async function loadVisitsForDistrict(district: string, userId: string) {
   if (!district.trim()) return [];
 
   const { data, error } = await supabase
     .from("visits")
     .select("type, subject_name, school_name, district, start_time, total_duration, implementation_status, behaviors")
+    .eq("created_by", userId)
     .eq("district", district)
     .order("start_time", { ascending: false })
     .limit(5000);
@@ -265,6 +268,7 @@ function ReportMetadataPanel({ metadata }: { metadata: ReportMetadata }) {
 }
 
 export default function ReportsPage() {
+  const { user } = useAuth();
   const [reportScope, setReportScope] = useState<ReportScope>("district");
   const [school, setSchool] = useState("");
   const [district, setDistrict] = useState("");
@@ -286,9 +290,14 @@ export default function ReportsPage() {
     (async () => {
       setLoadingOptions(true);
       setError(null);
+      if (!user?.id) {
+        setDistricts([]);
+        setLoadingOptions(false);
+        return;
+      }
       console.info("[reports] Loading district options from visits...");
       try {
-        const nextDistricts = await loadDistrictOptions();
+        const nextDistricts = await loadDistrictOptions(user.id);
         if (cancelled) return;
         setDistricts(nextDistricts);
       } catch (error) {
@@ -303,19 +312,19 @@ export default function ReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!district.trim()) return;
+    if (!district.trim() || !user?.id) return;
 
     (async () => {
       setLoadingSchools(true);
       setError(null);
       console.info("[reports] Loading schools from visits for district:", district);
       try {
-        const districtVisits = await loadVisitsForDistrict(district);
+        const districtVisits = await loadVisitsForDistrict(district, user.id);
         if (cancelled) return;
         setVisits(districtVisits);
         setSchools(getUniqueSchools(districtVisits));
@@ -331,7 +340,7 @@ export default function ReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [district]);
+  }, [district, user?.id]);
 
   const canDownload = useMemo(() => {
     return !loadingOptions && !loadingSchools && !downloading;
@@ -417,11 +426,10 @@ export default function ReportsPage() {
       }
     }
 
-    const toData = (map: Map<string, number>, limit?: number) =>
+    const toData = (map: Map<string, number>) =>
       Array.from(map.entries())
         .map(([label, value]) => ({ label, value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, limit);
+        .sort((a, b) => b.value - a.value);
 
     return {
       observationsBySchool: toData(schoolCounts),
@@ -434,7 +442,7 @@ export default function ReportsPage() {
         ...d,
         color: d.label === "Fully" ? "#4ade80" : d.label === "Partially" ? "#facc15" : d.label === "Not" ? "#f87171" : "#64748b",
       })),
-      frequentBehaviors: toData(behaviorCounts, 8),
+      frequentBehaviors: toData(behaviorCounts),
     };
   }, [reportScope, selectedReportVisits]);
 
@@ -454,7 +462,16 @@ export default function ReportsPage() {
       params.set("dateRangeLabel", reportDateRangeLabel);
       if (format === "csv") params.set("format", "csv");
 
-      const res = await fetch(`/api/reports?${params.toString()}`, { method: "GET" });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) throw new Error("Sign in again before downloading this report.");
+
+      const res = await fetch(`/api/reports?${params.toString()}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (!res.ok) throw new Error(`Report request failed (${res.status})`);
 
       const blob = await res.blob();

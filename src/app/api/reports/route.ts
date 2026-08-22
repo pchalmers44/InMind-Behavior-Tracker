@@ -21,6 +21,8 @@ type ReportBehavior = {
   category?: "positive" | "challenging" | string | null;
   count?: number | null;
   durationSec?: number | null;
+  intensity?: number | null;
+  occurrences?: Array<{ intensity?: number | null }> | null;
 };
 
 type VisitReportRow = {
@@ -35,6 +37,8 @@ type VisitReportRow = {
   total_duration?: number | null;
   behaviors?: ReportBehavior[] | null;
   implementation_status?: string | null;
+  notes?: string | null;
+  recommendations?: string | null;
 };
 
 type SupabaseReportsClient = SupabaseClient;
@@ -61,10 +65,16 @@ type BehaviorSummaryRow = {
 };
 type BreakdownRow = Record<string, string | number>;
 
-function requireEnv(name: "NEXT_PUBLIC_SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY") {
+function requireEnv(name: "NEXT_PUBLIC_SUPABASE_URL" | "NEXT_PUBLIC_SUPABASE_ANON_KEY") {
   const v = process.env[name];
   if (!v) throw new Error(`Missing required environment variable: ${name}`);
   return v;
+}
+
+function getBearerToken(req: NextRequest) {
+  const value = req.headers.get("authorization") || "";
+  const match = value.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] ?? null;
 }
 
 function durationToString(value: ObservationRow["duration"]) {
@@ -97,6 +107,20 @@ function getVisitType(row: VisitReportRow) {
 function behaviorValue(behavior: ReportBehavior) {
   if (behavior.type === "duration") return behavior.durationSec || 0;
   return behavior.count || 0;
+}
+
+function behaviorIntensitySummary(behavior: ReportBehavior) {
+  const values = (behavior.occurrences || [])
+    .map((record) => record.intensity)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (typeof behavior.intensity === "number" && Number.isFinite(behavior.intensity)) {
+    values.push(behavior.intensity);
+  }
+  if (!values.length) return { average: "", highest: "" };
+  return {
+    average: Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)),
+    highest: Math.max(...values),
+  };
 }
 
 function addAutoFit(worksheet: ExcelJS.Worksheet) {
@@ -324,6 +348,7 @@ function buildOrganizationalReportData(rows: VisitReportRow[], scope: Organizati
     const dateValue = dateFromVisit(row);
     const behaviors = row.behaviors?.length ? row.behaviors : [{ label: "", type: "duration", durationSec: row.total_duration || 0 }];
     for (const behavior of behaviors) {
+      const intensity = behaviorIntensitySummary(behavior);
       observationRows.push({
         Date: formatDate(dateValue),
         Student: type === "student" ? row.subject_name ?? "" : "",
@@ -331,7 +356,13 @@ function buildOrganizationalReportData(rows: VisitReportRow[], scope: Organizati
         School: row.school_name ?? "",
         District: row.district ?? "",
         Behavior: behavior.label ?? "",
+        Frequency: behavior.type === "frequency" ? behavior.count ?? 0 : "",
         Duration: behavior.type === "duration" ? secondsToDuration(behavior.durationSec || 0) : "",
+        "Average Intensity": intensity.average,
+        "Highest Intensity": intensity.highest,
+        "Implementation Status": row.implementation_status ?? "",
+        Notes: row.notes ?? "",
+        Recommendations: row.recommendations ?? "",
       });
     }
   }
@@ -352,11 +383,13 @@ async function buildOrganizationalExport(
   supabase: SupabaseReportsClient,
   scope: OrganizationalReportScope,
   format: string,
-  dateRange: ReportDateRange
+  dateRange: ReportDateRange,
+  userId: string
 ) {
   let query = supabase
     .from("visits")
     .select("*")
+    .eq("created_by", userId)
     .eq("district", scope.district)
     .order("start_time", { ascending: false })
     .limit(10000);
@@ -488,7 +521,13 @@ async function buildOrganizationalExport(
     { header: "School", key: "school", width: 24 },
     { header: "District", key: "district", width: 26 },
     { header: "Behavior", key: "behavior", width: 24 },
+    { header: "Frequency", key: "frequency", width: 12 },
     { header: "Duration", key: "duration", width: 12 },
+    { header: "Average Intensity", key: "averageIntensity", width: 18 },
+    { header: "Highest Intensity", key: "highestIntensity", width: 18 },
+    { header: "Implementation Status", key: "implementationStatus", width: 22 },
+    { header: "Notes", key: "notes", width: 32 },
+    { header: "Recommendations", key: "recommendations", width: 32 },
   ];
   observationSheet.getRow(1).font = { bold: true };
   observationSheet.addRows(report.observationRows.map((row) => ({
@@ -498,7 +537,13 @@ async function buildOrganizationalExport(
     school: row.School,
     district: row.District,
     behavior: row.Behavior,
+    frequency: row.Frequency,
     duration: row.Duration,
+    averageIntensity: row["Average Intensity"],
+    highestIntensity: row["Highest Intensity"],
+    implementationStatus: row["Implementation Status"],
+    notes: row.Notes,
+    recommendations: row.Recommendations,
   })));
 
   [summary, behaviorSheet, implementationSheet, typeSheet, ...extraSheets, observationSheet].forEach(addAutoFit);
@@ -531,13 +576,26 @@ export async function GET(req: NextRequest) {
   let supportsObservationType = true;
   try {
     const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
-    const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    const supabaseAnonKey = requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    const token = getBearerToken(req);
+    if (!token) {
+      return NextResponse.json({ ok: false, error: "Authentication required." }, { status: 401 });
+    }
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+    if (userError || !user?.id) {
+      return NextResponse.json({ ok: false, error: "Invalid authentication." }, { status: 401 });
+    }
+
     if (district && !student && !teacher) {
-      return buildOrganizationalExport(supabase, { district, school: school || undefined, dateRangeLabel }, format, dateRange);
+      return buildOrganizationalExport(supabase, { district, school: school || undefined, dateRangeLabel }, format, dateRange, user.id);
     }
 
     const selectWithType =
@@ -548,6 +606,7 @@ export async function GET(req: NextRequest) {
       let q = supabase
         .from("observations")
         .select(select)
+        .eq("created_by", user.id)
         .order("created_at", { ascending: false })
         .limit(10000);
 

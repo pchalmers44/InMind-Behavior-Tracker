@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { buildIntensityTrendLabel, normalizeBehaviorOccurrences } from "@/lib/behavior-intensity";
 
 type Behavior = {
@@ -133,6 +134,7 @@ function MiniLineChart({
 }
 
 export default function FbaReportsPage() {
+  const { user } = useAuth();
   const [student, setStudent] = useState("");
   const [behavior, setBehavior] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -150,10 +152,16 @@ export default function FbaReportsPage() {
     (async () => {
       setLoadingOptions(true);
       setError(null);
+      if (!user?.id) {
+        setStudents([]);
+        setLoadingOptions(false);
+        return;
+      }
       console.info("[fba-reports] Loading student options (type=fba)...");
       const { data, error } = await supabase
         .from("visits")
         .select("subject_name, type, start_time")
+        .eq("created_by", user.id)
         .eq("type", "fba")
         .order("start_time", { ascending: false })
         .limit(10000);
@@ -180,7 +188,7 @@ export default function FbaReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
 
   const canRun = useMemo(() => {
     return !loading && student.trim().length > 0;
@@ -189,6 +197,10 @@ export default function FbaReportsPage() {
   const runReport = async () => {
     const studentName = student.trim();
     if (!studentName) return;
+    if (!user?.id) {
+      setError("Sign in again before running this report.");
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -199,6 +211,7 @@ export default function FbaReportsPage() {
         .select(
           "id, type, subject_name, observer_name, grade, district, school_name, start_time, end_time, total_duration, abc_entries, behaviors, fba_latency_events, fba_interval_sessions"
         )
+        .eq("created_by", user.id)
         .eq("type", "fba")
         .eq("subject_name", studentName)
         .order("start_time", { ascending: true })

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { GRADE_OPTIONS } from "@/lib/grades";
 import {
   buildIntensityTrendLabel,
@@ -79,6 +80,7 @@ type Visit = {
   recommendations?: string;
   implementationStatus?: string;
   implementationNotes?: string;
+  updatedAt?: string | number | null;
   prevVisit?: Visit | null;
   [key: string]: any;
 };
@@ -293,6 +295,7 @@ type BehaviorSetupSectionProps = {
   onChooseIntensity: (val: number) => void;
   onSkipIntensity: () => void;
   durationTimers: Record<string, number>;
+  setDurationTimers: Dispatch<SetStateAction<Record<string, number>>>;
   activeTimers: MutableRefObject<Record<string, boolean>>;
   elapsed: number;
   totalStudents?: number | null;
@@ -335,10 +338,66 @@ function BehaviorSetupSection({
   onChooseIntensity,
   onSkipIntensity,
   durationTimers,
+  setDurationTimers,
   activeTimers,
   elapsed,
   totalStudents,
 }: BehaviorSetupSectionProps) {
+  const updateFrequencyCount = (behaviorId: string, nextCount: number) => {
+    const count = Math.max(0, Math.floor(Number.isFinite(nextCount) ? nextCount : 0));
+    setBehaviors((prev) =>
+      prev.map((behavior) => {
+        if (behavior.id !== behaviorId) return behavior;
+        const occurrences = normalizeBehaviorOccurrences(behavior);
+        const nextOccurrences =
+          count > occurrences.length
+            ? [
+                ...occurrences,
+                ...Array.from({ length: count - occurrences.length }, () => ({
+                  intensity: null,
+                  timestamp: Date.now() + Math.random(),
+                })),
+              ]
+            : occurrences.slice(0, count);
+        return {
+          ...behavior,
+          count,
+          occurrences: nextOccurrences,
+          intensity: nextOccurrences.length ? nextOccurrences[nextOccurrences.length - 1].intensity ?? null : null,
+        };
+      })
+    );
+  };
+
+  const updateDurationSeconds = (behaviorId: string, nextDurationSec: number) => {
+    const durationSec = Math.max(0, Math.floor(Number.isFinite(nextDurationSec) ? nextDurationSec : 0));
+    setDurationTimers((prev) => ({ ...prev, [behaviorId]: durationSec }));
+    setBehaviors((prev) => prev.map((behavior) => (behavior.id === behaviorId ? { ...behavior, durationSec } : behavior)));
+  };
+
+  const updateOccurrenceIntensity = (behaviorId: string, timestamp: number, intensity: number | null) => {
+    setBehaviors((prev) =>
+      prev.map((behavior) =>
+        behavior.id === behaviorId ? setBehaviorOccurrenceIntensity(behavior, timestamp, intensity) : behavior
+      )
+    );
+  };
+
+  const removeOccurrence = (behaviorId: string, timestamp: number) => {
+    setBehaviors((prev) =>
+      prev.map((behavior) => {
+        if (behavior.id !== behaviorId) return behavior;
+        const occurrences = normalizeBehaviorOccurrences(behavior).filter((record) => record.timestamp !== timestamp);
+        return {
+          ...behavior,
+          count: behavior.type === "frequency" && behavior.measureType !== "student-count" ? occurrences.length : behavior.count,
+          occurrences,
+          intensity: occurrences.length ? occurrences[occurrences.length - 1].intensity ?? null : null,
+        };
+      })
+    );
+  };
+
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -502,6 +561,22 @@ function BehaviorSetupSection({
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                     <button
+                      onClick={() => updateFrequencyCount(b.id, (b.count || 0) - 1)}
+                      disabled={intensityBlocked || (b.count || 0) <= 0}
+                      style={{
+                        background: intensityBlocked || (b.count || 0) <= 0 ? "#0f172a" : "#334155",
+                        color: intensityBlocked || (b.count || 0) <= 0 ? "#475569" : "#e2e8f0",
+                        border: "none",
+                        borderRadius: 12,
+                        padding: "10px 14px",
+                        fontSize: 14,
+                        fontWeight: 800,
+                        cursor: intensityBlocked || (b.count || 0) <= 0 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      -1
+                    </button>
+                    <button
                       onClick={() => onRecordFrequency(b.id)}
                       disabled={intensityBlocked}
                       style={{
@@ -522,6 +597,25 @@ function BehaviorSetupSection({
                       <div style={{ fontSize: 32, fontWeight: 900, color: "#818cf8", lineHeight: 1 }}>{b.count || 0}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>occurrences</div>
                     </div>
+                    <input
+                      type="number"
+                      min={0}
+                      value={b.count || 0}
+                      onChange={(e) => updateFrequencyCount(b.id, parseInt(e.target.value || "0", 10))}
+                      disabled={intensityBlocked}
+                      aria-label={`${b.label} occurrences`}
+                      style={{
+                        width: 88,
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: 10,
+                        color: intensityBlocked ? "#475569" : "#e2e8f0",
+                        padding: "9px 10px",
+                        fontSize: 13,
+                        fontFamily: "inherit",
+                        boxSizing: "border-box",
+                      }}
+                    />
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 18, fontWeight: 700, color: "#94a3b8" }}>{calcRate(b.count || 0, elapsed)}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>rate</div>
@@ -566,6 +660,25 @@ function BehaviorSetupSection({
                   </div>
                   <div style={{ fontSize: 11, color: "#64748b" }}>recorded</div>
                 </div>
+                <input
+                  type="number"
+                  min={0}
+                  value={durSec}
+                  onChange={(e) => updateDurationSeconds(b.id, parseInt(e.target.value || "0", 10))}
+                  disabled={intensityBlocked}
+                  aria-label={`${b.label} duration seconds`}
+                  style={{
+                    width: 104,
+                    background: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: 10,
+                    color: intensityBlocked ? "#475569" : "#e2e8f0",
+                    padding: "9px 10px",
+                    fontSize: 13,
+                    fontFamily: "inherit",
+                    boxSizing: "border-box",
+                  }}
+                />
                 {elapsed > 0 && (
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontSize: 18, fontWeight: 700, color: "#94a3b8" }}>{Math.round((durSec / elapsed) * 100)}%</div>
@@ -602,6 +715,75 @@ function BehaviorSetupSection({
                     </div>
                   </div>
                 </div>
+                {normalizeBehaviorOccurrences(b).length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 800, marginBottom: 6 }}>
+                      INTENSITY RECORDS
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {normalizeBehaviorOccurrences(b).map((record, idx) => (
+                        <div
+                          key={`${b.id}-${record.timestamp}-${idx}`}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            flexWrap: "wrap",
+                            background: "#111827",
+                            border: "1px solid #334155",
+                            borderRadius: 10,
+                            padding: "8px 10px",
+                          }}
+                        >
+                          <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 800 }}>
+                            #{idx + 1}
+                          </div>
+                          <select
+                            value={record.intensity ?? ""}
+                            onChange={(e) =>
+                              updateOccurrenceIntensity(
+                                b.id,
+                                record.timestamp,
+                                e.target.value ? parseInt(e.target.value, 10) : null
+                              )
+                            }
+                            style={{
+                              background: "#0f172a",
+                              border: "1px solid #334155",
+                              borderRadius: 8,
+                              color: "#e2e8f0",
+                              padding: "6px 8px",
+                              fontSize: 12,
+                              fontFamily: "inherit",
+                            }}
+                          >
+                            <option value="">No intensity</option>
+                            {INTENSITY_LEVELS.map((level) => (
+                              <option key={level.value} value={level.value}>
+                                {level.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => removeOccurrence(b.id, record.timestamp)}
+                            style={{
+                              background: "transparent",
+                              border: "1px solid #334155",
+                              borderRadius: 8,
+                              color: "#94a3b8",
+                              cursor: "pointer",
+                              padding: "6px 8px",
+                              fontSize: 12,
+                              fontWeight: 800,
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1050,15 +1232,19 @@ function ActiveVisit({
   visit,
   onComplete,
   prevVisit,
+  isEditing = false,
 }: {
   visit: Visit;
   onComplete: (completed: Visit) => void;
   prevVisit?: Visit | null;
+  isEditing?: boolean;
 }) {
   const totalStudents = visit.totalStudents || null;
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsed, setElapsed] = useState(() => Math.max(0, Math.floor(visit.totalDuration || 0)));
   const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
-  const [durationTimers, setDurationTimers] = useState<Record<string, number>>({});
+  const [durationTimers, setDurationTimers] = useState<Record<string, number>>(() =>
+    Object.fromEntries((visit.behaviors || []).filter((b) => b.type === "duration").map((b) => [b.id, b.durationSec || 0]))
+  );
   const [notes, setNotes] = useState(visit.notes || "");
   const [recommendations, setRecommendations] = useState(visit.recommendations || "");
   const [implStatus, setImplStatus] = useState(visit.implementationStatus || "");
@@ -1076,11 +1262,12 @@ function ActiveVisit({
   const durationStarts = useRef<Record<string, number>>({});
 
   useEffect(() => {
+    if (isEditing) return;
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
     }, 1000);
     return () => clearInterval(timerRef.current as any);
-  }, []);
+  }, [isEditing]);
 
   useBehaviorDurationTimer(activeTimers, setDurationTimers);
 
@@ -1163,7 +1350,7 @@ function ActiveVisit({
     if (!customBehavior.label.trim()) return;
     if (!customBehavior.behaviorType) return;
     const nb = {
-      id: uid(),
+      id: crypto.randomUUID(),
       label: customBehavior.label,
       type: customBehavior.type,
       category: customBehavior.behaviorType,
@@ -1212,7 +1399,8 @@ function ActiveVisit({
       recommendations,
       implementationStatus: implStatus,
       implementationNotes: implNotes,
-      endTime: Date.now(),
+      endTime: isEditing ? visit.endTime ?? Date.now() : Date.now(),
+      updatedAt: isEditing ? new Date().toISOString() : visit.updatedAt,
       totalDuration: elapsed
     });
   };
@@ -1231,7 +1419,7 @@ function ActiveVisit({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
           <div>
             <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 4 }}>
-              ACTIVE OBSERVATION
+              {isEditing ? "EDIT OBSERVATION" : "ACTIVE OBSERVATION"}
             </div>
             <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>{visit.subjectName}</div>
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 2 }}>
@@ -1252,17 +1440,21 @@ function ActiveVisit({
       </div>
 
       {/* Implementation follow-up */}
-      {prevVisit && prevVisit.recommendations && (
+      {(prevVisit?.recommendations || isEditing || visit.implementationStatus) && (
         <div style={{
           background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16,
           border: "1px solid #f59e0b55"
         }}>
           <div style={{ fontSize: 12, color: "#f59e0b", fontWeight: 700, marginBottom: 8 }}>
-            FOLLOW-UP: Recommendations from {dateStr(prevVisit.endTime || prevVisit.startTime)}
+            {prevVisit?.recommendations
+              ? `FOLLOW-UP: Recommendations from ${dateStr(prevVisit.endTime || prevVisit.startTime)}`
+              : "IMPLEMENTATION FOLLOW-UP"}
           </div>
-          <div style={{ fontSize: 13, color: "#cbd5e1", marginBottom: 12, fontStyle: "italic" }}>
-            "{prevVisit.recommendations}"
-          </div>
+          {prevVisit?.recommendations && (
+            <div style={{ fontSize: 13, color: "#cbd5e1", marginBottom: 12, fontStyle: "italic" }}>
+              &quot;{prevVisit.recommendations}&quot;
+            </div>
+          )}
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Were these recommendations implemented?</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: implStatus ? 10 : 0 }}>
             {["fully", "partially", "not"].map(s => (
@@ -1304,6 +1496,7 @@ function ActiveVisit({
         onChooseIntensity={chooseIntensity}
         onSkipIntensity={skipIntensity}
         durationTimers={durationTimers}
+        setDurationTimers={setDurationTimers}
         activeTimers={activeTimers}
         elapsed={elapsed}
         totalStudents={totalStudents}
@@ -1335,7 +1528,7 @@ function ActiveVisit({
         width: "100%", background: "linear-gradient(135deg, #10b981, #34d399)",
         color: "#0f172a", border: "none", borderRadius: 12, padding: "16px",
         fontSize: 16, fontWeight: 900, cursor: "pointer", letterSpacing: "0.02em"
-      }}>Complete Visit ({fmtTime(elapsed)})</button>
+      }}>{isEditing ? "Save Changes" : `Complete Visit (${fmtTime(elapsed)})`}</button>
     </div>
   );
 }
@@ -1343,16 +1536,20 @@ function ActiveVisit({
 function ActiveFbaVisit({
   visit,
   onComplete,
+  isEditing = false,
 }: {
   visit: Visit;
   onComplete: (completed: Visit) => void;
+  isEditing?: boolean;
 }) {
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsed, setElapsed] = useState(() => Math.max(0, Math.floor(visit.totalDuration || 0)));
   const startRef = useRef<number>(visit.startTime);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
-  const [durationTimers, setDurationTimers] = useState<Record<string, number>>({});
+  const [durationTimers, setDurationTimers] = useState<Record<string, number>>(() =>
+    Object.fromEntries((visit.behaviors || []).filter((b) => b.type === "duration").map((b) => [b.id, b.durationSec || 0]))
+  );
   const activeTimers = useRef<Record<string, boolean>>({});
   const durationStarts = useRef<Record<string, number>>({});
 
@@ -1365,8 +1562,13 @@ function ActiveFbaVisit({
   });
   const [selectedLatencyBehaviorId, setSelectedLatencyBehaviorId] = useState<string>("");
   const [latencyOtherBehaviorLabel, setLatencyOtherBehaviorLabel] = useState<string>("");
-  const [selectedIntervalBehaviorId, setSelectedIntervalBehaviorId] = useState<string>("");
-  const [intervalOtherBehaviorLabel, setIntervalOtherBehaviorLabel] = useState<string>("");
+  const firstIntervalSession = visit.fbaIntervalSessions?.[0] ?? null;
+  const [selectedIntervalBehaviorId, setSelectedIntervalBehaviorId] = useState<string>(() =>
+    firstIntervalSession ? firstIntervalSession.behaviorId ?? "__other__" : ""
+  );
+  const [intervalOtherBehaviorLabel, setIntervalOtherBehaviorLabel] = useState<string>(() =>
+    firstIntervalSession && !firstIntervalSession.behaviorId ? firstIntervalSession.behaviorLabel : ""
+  );
 
   const [abcEntries, setAbcEntries] = useState<AbcEntry[]>(
     visit.abcEntries && visit.abcEntries.length > 0
@@ -1383,10 +1585,16 @@ function ActiveFbaVisit({
   const [latencyStartMs, setLatencyStartMs] = useState<number | null>(null);
   const [latencyStartMeta, setLatencyStartMeta] = useState<{ startTime: number; behaviorId: string | null; behaviorLabel: string } | null>(null);
 
-  const [intervalLengthSec, setIntervalLengthSec] = useState<number>(visit.intervalLengthSec || 10);
-  const [intervalRecords, setIntervalRecords] = useState<boolean[]>(visit.intervalRecords || []);
+  const [intervalLengthSec, setIntervalLengthSec] = useState<number>(
+    firstIntervalSession?.intervalLengthSec || visit.intervalLengthSec || 10
+  );
+  const [intervalRecords, setIntervalRecords] = useState<boolean[]>(
+    firstIntervalSession?.records?.length
+      ? firstIntervalSession.records.map((record) => record.behaviorPresent)
+      : visit.intervalRecords || []
+  );
   const [fbaIntervalSessions] = useState<FbaIntervalSession[]>(visit.fbaIntervalSessions || []);
-  const [intervalRecordEvents, setIntervalRecordEvents] = useState<FbaIntervalRecord[]>([]);
+  const [intervalRecordEvents, setIntervalRecordEvents] = useState<FbaIntervalRecord[]>(() => firstIntervalSession?.records || []);
   const [intervalRunning, setIntervalRunning] = useState(false);
   const [intervalCountdown, setIntervalCountdown] = useState(intervalLengthSec);
   const intervalTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1395,11 +1603,12 @@ function ActiveFbaVisit({
   const [recommendations, setRecommendations] = useState(visit.recommendations || "");
 
   useEffect(() => {
+    if (isEditing) return;
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
     }, 1000);
     return () => clearInterval(timerRef.current as any);
-  }, []);
+  }, [isEditing]);
 
   useEffect(() => {
     if (!intervalRunning) return;
@@ -1627,18 +1836,16 @@ function ActiveFbaVisit({
         selectedIntervalBehaviorId === "__other__"
           ? intervalOtherBehaviorLabel.trim()
           : behaviors.find((x) => x.id === selectedIntervalBehaviorId)?.label || "Unknown";
-      return [
-        ...fbaIntervalSessions,
-        {
-          behaviorId,
-          behaviorLabel,
-          intervalLengthSec: Math.max(1, Math.floor(intervalLengthSec || 10)),
-          records: intervalRecordEvents.length > 0
-            ? intervalRecordEvents
-            : intervalRecords.map((v, i) => ({ intervalNumber: i + 1, behaviorPresent: v, timestamp: Date.now() })),
-          startedAt: visit.startTime,
-        },
-      ];
+      const currentSession = {
+        behaviorId,
+        behaviorLabel,
+        intervalLengthSec: Math.max(1, Math.floor(intervalLengthSec || 10)),
+        records: intervalRecordEvents.length > 0
+          ? intervalRecordEvents
+          : intervalRecords.map((v, i) => ({ intervalNumber: i + 1, behaviorPresent: v, timestamp: Date.now() })),
+        startedAt: firstIntervalSession?.startedAt ?? visit.startTime,
+      };
+      return isEditing && firstIntervalSession ? [currentSession, ...fbaIntervalSessions.slice(1)] : [...fbaIntervalSessions, currentSession];
     })();
 
     onComplete({
@@ -1652,7 +1859,8 @@ function ActiveFbaVisit({
       fbaIntervalSessions: intervalSessionsNext,
       notes,
       recommendations,
-      endTime: Date.now(),
+      endTime: isEditing ? visit.endTime ?? Date.now() : Date.now(),
+      updatedAt: isEditing ? new Date().toISOString() : visit.updatedAt,
       totalDuration: elapsed,
     });
   };
@@ -1667,7 +1875,7 @@ function ActiveFbaVisit({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div>
             <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700, letterSpacing: "0.08em" }}>
-              FBA OBSERVATION
+              {isEditing ? "EDIT FBA OBSERVATION" : "FBA OBSERVATION"}
             </div>
             <div style={{ fontSize: 22, fontWeight: 900, color: "#f1f5f9", marginTop: 6 }}>
               {visit.subjectName}
@@ -1724,6 +1932,7 @@ function ActiveFbaVisit({
         onChooseIntensity={chooseIntensity}
         onSkipIntensity={skipIntensity}
         durationTimers={durationTimers}
+        setDurationTimers={setDurationTimers}
         activeTimers={activeTimers}
         elapsed={elapsed}
       />
@@ -1932,9 +2141,30 @@ function ActiveFbaVisit({
                       border: "1px solid #334155",
                       fontSize: 12,
                       color: "#e2e8f0",
-                      fontVariantNumeric: "tabular-nums"
+                      fontVariantNumeric: "tabular-nums",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
                     }}>
                       {evt.behaviorLabel}: {evt.latencySec}s
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFbaLatencyEvents((prev) => prev.filter((_, idx) => idx !== i));
+                          setLatencyRecords((prev) => prev.filter((_, idx) => idx !== i));
+                        }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#64748b",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 900,
+                          padding: 0,
+                        }}
+                      >
+                        x
+                      </button>
                     </span>
                   ))
                   : latencyRecords.map((s, i) => (
@@ -1945,9 +2175,27 @@ function ActiveFbaVisit({
                   border: "1px solid #334155",
                   fontSize: 12,
                   color: "#e2e8f0",
-                  fontVariantNumeric: "tabular-nums"
+                  fontVariantNumeric: "tabular-nums",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
                 }}>
                   Latency: {s}s
+                  <button
+                    type="button"
+                    onClick={() => setLatencyRecords((prev) => prev.filter((_, idx) => idx !== i))}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 900,
+                      padding: 0,
+                    }}
+                  >
+                    x
+                  </button>
                 </span>
               ))}
           </div>
@@ -2101,8 +2349,33 @@ function ActiveFbaVisit({
                 border: `1px solid ${evt.behaviorPresent ? "#4ade8044" : "#f8717144"}`,
                 fontSize: 12,
                 color: "#e2e8f0",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
               }}>
                 #{evt.intervalNumber}: {evt.behaviorPresent ? "Yes" : "No"}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIntervalRecordEvents((prev) =>
+                      prev
+                        .filter((record) => record.intervalNumber !== evt.intervalNumber)
+                        .map((record, idx) => ({ ...record, intervalNumber: idx + 1 }))
+                    );
+                    setIntervalRecords((prev) => prev.filter((_, idx) => idx !== evt.intervalNumber - 1));
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#64748b",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    padding: 0,
+                  }}
+                >
+                  x
+                </button>
               </span>
             ))}
           </div>
@@ -2116,8 +2389,26 @@ function ActiveFbaVisit({
                 border: `1px solid ${v ? "#4ade8044" : "#f8717144"}`,
                 fontSize: 12,
                 color: "#e2e8f0",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
               }}>
                 {v ? "Yes" : "No"}
+                <button
+                  type="button"
+                  onClick={() => setIntervalRecords((prev) => prev.filter((_, idx) => idx !== i))}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#64748b",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    padding: 0,
+                  }}
+                >
+                  x
+                </button>
               </span>
             ))}
           </div>
@@ -2151,14 +2442,14 @@ function ActiveFbaVisit({
         color: "#0f172a", border: "none", borderRadius: 14, padding: "16px",
         fontSize: 15, fontWeight: 900, cursor: "pointer"
       }}>
-        Complete FBA ({fmtTime(elapsed)})
+        {isEditing ? "Save Changes" : `Complete FBA (${fmtTime(elapsed)})`}
       </button>
     </div>
   );
 }
 
 // --- Visit Summary Card ---
-function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
+function VisitCard({ visit, onClick, onEdit }: { visit: Visit; onClick: () => void; onEdit: () => void }) {
   const implColor = visit.implementationStatus === "fully" ? "#4ade80"
     : visit.implementationStatus === "partially" ? "#facc15"
     : visit.implementationStatus === "not" ? "#f87171" : null;
@@ -2174,7 +2465,7 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
       onMouseEnter={e => e.currentTarget.style.borderColor = "#38bdf8"}
       onMouseLeave={e => e.currentTarget.style.borderColor = "#334155"}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 800, color: "#f1f5f9" }}>{visit.subjectName}</div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
@@ -2187,10 +2478,29 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
             {typeLabel}
           </Badge>
           {implColor && <Badge color={implColor}>{visit.implementationStatus}</Badge>}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onEdit();
+            }}
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: 8,
+              color: "#38bdf8",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 800,
+              padding: "5px 10px",
+            }}
+          >
+            Edit
+          </button>
         </div>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-        {(visit.behaviors || []).slice(0, 4).map(b => {
+        {(visit.behaviors || []).map(b => {
           const intensityStats = b.category === "challenging" ? getBehaviorIntensityStats(b) : null;
           return (
           <span key={b.id} style={{
@@ -2208,16 +2518,13 @@ function VisitCard({ visit, onClick }: { visit: Visit; onClick: () => void }) {
           </span>
           );
         })}
-        {(visit.behaviors || []).length > 4 && (
-          <span style={{ color: "#475569", fontSize: 11, padding: "3px 8px" }}>+{(visit.behaviors || []).length - 4} more</span>
-        )}
       </div>
     </div>
   );
 }
 
 // --- Visit Detail Modal ---
-function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) {
+function VisitDetail({ visit, onClose, onEdit }: { visit: Visit; onClose: () => void; onEdit: () => void }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "#000000cc", zIndex: 100,
@@ -2236,7 +2543,24 @@ function VisitDetail({ visit, onClose }: { visit: Visit; onClose: () => void }) 
             <div style={{ fontSize: 13, color: "#94a3b8" }}>Observer: {visit.observerName}</div>
             {visit.schoolName && <div style={{ fontSize: 13, color: "#64748b" }}>School: {visit.schoolName}</div>}
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", fontSize: 22, cursor: "pointer" }}>x</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={onEdit}
+              style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 8,
+                color: "#38bdf8",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                padding: "7px 12px",
+              }}
+            >
+              Edit
+            </button>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", fontSize: 22, cursor: "pointer" }}>x</button>
+          </div>
         </div>
 
         {visit.implementationStatus && (
@@ -2633,11 +2957,10 @@ function Reports({ visits }: { visits: Visit[] }) {
       }
     }
 
-    const toData = (map: Map<string, number>, limit?: number) =>
+    const toData = (map: Map<string, number>) =>
       Array.from(map.entries())
         .map(([label, value]) => ({ label, value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, limit);
+        .sort((a, b) => b.value - a.value);
 
     return {
       observationsBySchool: toData(schoolCounts),
@@ -2650,7 +2973,7 @@ function Reports({ visits }: { visits: Visit[] }) {
         ...d,
         color: d.label === "Fully" ? "#4ade80" : d.label === "Partially" ? "#facc15" : d.label === "Not" ? "#f87171" : "#64748b",
       })),
-      frequentBehaviors: toData(behaviorCounts, 8),
+      frequentBehaviors: toData(behaviorCounts),
     };
   }, [reportScope, selectedReportVisits]);
 
@@ -2669,7 +2992,16 @@ function Reports({ visits }: { visits: Visit[] }) {
       params.set("dateRangeLabel", reportDateRangeLabel);
       if (format === "csv") params.set("format", "csv");
 
-      const res = await fetch(`/api/reports?${params.toString()}`, { method: "GET" });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) throw new Error("Sign in again before downloading this report.");
+
+      const res = await fetch(`/api/reports?${params.toString()}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (!res.ok) throw new Error(`Report request failed (${res.status})`);
 
       const blob = await res.blob();
@@ -3026,6 +3358,7 @@ function Reports({ visits }: { visits: Visit[] }) {
 
 // --- Main App ---
 function PageInner() {
+  const { user } = useAuth();
   const [data, setData] = useState<DataState | null>(null);
   const [screen, setScreen] = useState<"home" | "new-visit" | "active" | "history" | "reports">("home"); // home | new-visit | active | history | reports
   const [activeVisit, setActiveVisit] = useState<Visit | null>(null);
@@ -3043,6 +3376,7 @@ function PageInner() {
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
   const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
   const [implementationStatus, setImplementationStatus] = useState("");
+  const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlFirstVisitParam = searchParams.get("firstVisit");
@@ -3074,11 +3408,17 @@ function PageInner() {
     };
 
     const fetchPersistedVisits = async () => {
+      if (!user?.id) {
+        setData({ visits: [], subjects: [] });
+        return;
+      }
+
       console.info("[visits] Fetch start: visits table");
       try {
         const { data: visits, error } = await supabase
           .from("visits")
           .select("*")
+          .eq("created_by", user.id)
           .order("start_time", { ascending: false });
 
         if (error) {
@@ -3107,6 +3447,10 @@ function PageInner() {
             intervalRecords: v.interval_records ?? v.intervalRecords,
             intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
             fbaIntervalSessions: v.fba_interval_sessions ?? v.fbaIntervalSessions,
+            notes: v.notes,
+            recommendations: v.recommendations,
+            implementationNotes: v.implementation_notes ?? v.implementationNotes,
+            updatedAt: v.updated_at ?? v.updatedAt,
             behaviors: normalizeBehaviorList(v.behaviors ?? v.behaviors),
             startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
             endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
@@ -3126,7 +3470,7 @@ function PageInner() {
     };
 
     fetchPersistedVisits();
-  }, []);
+  }, [user?.id]);
 
   const persistData = useCallback((d: DataState) => {
     setData(d);
@@ -3175,12 +3519,27 @@ function PageInner() {
       implementationStatus: newVisitForm.type !== "fba" && selectedFirstVisit === false ? implementationStatus : undefined,
       prevVisit: prevVisits[0] || null
     } as any;
+    setEditingVisitId(null);
     setActiveVisit(visit);
     setScreen("active");
   };
 
+  const editVisit = (visit: Visit) => {
+    setSelectedVisit(null);
+    setEditingVisitId(visit.id);
+    setActiveVisit({ ...visit, prevVisit: null });
+    setScreen("active");
+  };
+
   const completeVisit = (completedVisit: Visit) => {
-    const updated: DataState = { ...(data as DataState), visits: [...(data?.visits || []), completedVisit] };
+    const isEditing = editingVisitId === completedVisit.id;
+    const completedWithTimestamp: Visit = isEditing
+      ? { ...completedVisit, updatedAt: completedVisit.updatedAt ?? new Date().toISOString() }
+      : completedVisit;
+    const updatedVisits = isEditing
+      ? (data?.visits || []).map((visit) => (visit.id === completedWithTimestamp.id ? completedWithTimestamp : visit))
+      : [...(data?.visits || []), completedWithTimestamp];
+    const updated: DataState = { ...(data as DataState), visits: updatedVisits };
 
     setData(updated);
 
@@ -3197,7 +3556,6 @@ function PageInner() {
       };
 
       const visitObjectBase = {
-        id: crypto.randomUUID(),
         subject_name: completedVisit.subjectName,
         observer_name: completedVisit.observerName,
         type: completedVisit.type ?? "",
@@ -3209,6 +3567,10 @@ function PageInner() {
         end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
         total_duration: completedVisit.totalDuration ?? null,
         behaviors: completedVisit.behaviors ?? [],
+        notes: completedVisit.notes ?? null,
+        recommendations: completedVisit.recommendations ?? null,
+        implementation_status: completedVisit.implementationStatus ?? null,
+        implementation_notes: completedVisit.implementationNotes ?? null,
       };
 
       const visitObject = {
@@ -3216,9 +3578,6 @@ function PageInner() {
         // For forward compatibility with schemas that store the observation type separately.
         ...(completedVisit.type ? { observation_type: completedVisit.type } : {}),
         ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
-        ...(completedVisit.type !== "fba" && completedVisit.isFirstVisit === false
-          ? { implementation_status: completedVisit.implementationStatus ?? implementationStatus }
-          : {}),
         ...(completedVisit.type === "fba"
           ? {
             abc_entries: completedVisit.abcEntries ?? [],
@@ -3231,33 +3590,76 @@ function PageInner() {
           : {}),
       };
 
-      console.info("[visits] Insert start", {
+      console.info(isEditing ? "[visits] Update start" : "[visits] Insert start", {
         type: completedVisit.type,
         subject: completedVisit.subjectName,
         startTime: completedVisit.startTime,
       });
 
-      let insertResult = await supabase.from("visits").insert([visitObject]).select();
-      if (
-        insertResult.error &&
-        /(is_first_visit|district|implementation_status|observation_type|abc_entries|latency_records|fba_latency_events|interval_records|interval_length_sec|fba_interval_sessions)/i.test(
-          insertResult.error.message || ""
-        )
-      ) {
-        logSupabaseError("[visits] Insert retry due to missing column(s)", insertResult.error);
-        insertResult = await supabase.from("visits").insert([visitObjectBase as any]).select();
+      if (!user?.id) {
+        logSupabaseError("[visits] Insert error", new Error("No authenticated user found."));
+        return;
       }
 
-      if (insertResult.error) {
-        logSupabaseError("[visits] Insert error", insertResult.error);
+      const missingColumnPattern =
+        /(is_first_visit|district|implementation_status|implementation_notes|observation_type|notes|recommendations|abc_entries|latency_records|fba_latency_events|interval_records|interval_length_sec|fba_interval_sessions|updated_at)/i;
+
+      if (isEditing) {
+        let updateObject: Record<string, unknown> = { ...visitObject, updated_at: completedWithTimestamp.updatedAt };
+        let updateResult = await supabase
+          .from("visits")
+          .update(updateObject)
+          .eq("id", completedVisit.id)
+          .eq("created_by", user.id)
+          .select();
+
+        if (updateResult.error && missingColumnPattern.test(updateResult.error.message || "")) {
+          logSupabaseError("[visits] Update retry due to missing column(s)", updateResult.error);
+          updateObject = { ...visitObjectBase, updated_at: completedWithTimestamp.updatedAt };
+          updateResult = await supabase
+            .from("visits")
+            .update(updateObject)
+            .eq("id", completedVisit.id)
+            .eq("created_by", user.id)
+            .select();
+        }
+
+        if (updateResult.error) {
+          logSupabaseError("[visits] Update error", updateResult.error);
+        } else {
+          console.info("[visits] Update success", { rowsUpdated: updateResult.data?.length ?? 0 });
+        }
+
+        console.debug("[visits] Update response data:", updateResult.data);
       } else {
-        console.info("[visits] Insert success", { rowsInserted: insertResult.data?.length ?? 0 });
-      }
+        const insertObject = {
+          id: completedVisit.id,
+          created_by: user.id,
+          ...visitObject,
+        };
+        const insertObjectBase = {
+          id: insertObject.id,
+          created_by: user.id,
+          ...visitObjectBase,
+        };
+        let insertResult = await supabase.from("visits").insert([insertObject]).select();
+        if (insertResult.error && missingColumnPattern.test(insertResult.error.message || "")) {
+          logSupabaseError("[visits] Insert retry due to missing column(s)", insertResult.error);
+          insertResult = await supabase.from("visits").insert([insertObjectBase]).select();
+        }
 
-      console.debug("[visits] Insert response data:", insertResult.data);
+        if (insertResult.error) {
+          logSupabaseError("[visits] Insert error", insertResult.error);
+        } else {
+          console.info("[visits] Insert success", { rowsInserted: insertResult.data?.length ?? 0 });
+        }
+
+        console.debug("[visits] Insert response data:", insertResult.data);
+      }
     })();
 
     setActiveVisit(null);
+    setEditingVisitId(null);
     setScreen("home");
     setTab("home");
     setNewVisitForm({
@@ -3346,12 +3748,13 @@ function PageInner() {
         {/* Active visit */}
         {screen === "active" && activeVisit && (
           activeVisit.type === "fba" ? (
-            <ActiveFbaVisit visit={activeVisit} onComplete={completeVisit} />
+            <ActiveFbaVisit visit={activeVisit} onComplete={completeVisit} isEditing={editingVisitId === activeVisit.id} />
           ) : (
             <ActiveVisit
               visit={activeVisit}
               prevVisit={activeVisit.prevVisit}
               onComplete={completeVisit}
+              isEditing={editingVisitId === activeVisit.id}
             />
           )
         )}
@@ -3687,7 +4090,7 @@ function PageInner() {
                   <>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 10 }}>RECENT VISITS</div>
                     {allVisits.slice(0, 5).map(v => (
-                      <VisitCard key={v.id} visit={v} onClick={() => setSelectedVisit(v)} />
+                      <VisitCard key={v.id} visit={v} onClick={() => setSelectedVisit(v)} onEdit={() => editVisit(v)} />
                     ))}
                     {allVisits.length > 5 && (
                       <button onClick={() => { setTab("history"); setScreen("history"); }} style={{
@@ -3717,7 +4120,7 @@ function PageInner() {
                 {allVisits.length === 0 ? (
                   <div style={{ textAlign: "center", padding: 40, color: "#475569" }}>No visits recorded yet.</div>
                 ) : (
-                  allVisits.map(v => <VisitCard key={v.id} visit={v} onClick={() => setSelectedVisit(v)} />)
+                  allVisits.map(v => <VisitCard key={v.id} visit={v} onClick={() => setSelectedVisit(v)} onEdit={() => editVisit(v)} />)
                 )}
               </div>
             )}
@@ -3729,7 +4132,13 @@ function PageInner() {
       </div>
 
       {/* Visit detail modal */}
-      {selectedVisit && <VisitDetail visit={selectedVisit} onClose={() => setSelectedVisit(null)} />}
+      {selectedVisit && (
+        <VisitDetail
+          visit={selectedVisit}
+          onClose={() => setSelectedVisit(null)}
+          onEdit={() => editVisit(selectedVisit)}
+        />
+      )}
     </div>
   );
 }
