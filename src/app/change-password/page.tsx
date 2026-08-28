@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 export default function ChangePasswordPage() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const isRecovery = searchParams.get("recovery") === "1";
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -25,7 +28,7 @@ export default function ChangePasswordPage() {
       setError("No authenticated user email was found.");
       return;
     }
-    if (!currentPassword || !newPassword || !confirmPassword) {
+    if ((!isRecovery && !currentPassword) || !newPassword || !confirmPassword) {
       setError("Complete all password fields.");
       return;
     }
@@ -33,22 +36,24 @@ export default function ChangePasswordPage() {
       setError("New password and confirmation do not match.");
       return;
     }
-    if (newPassword === currentPassword) {
+    if (!isRecovery && newPassword === currentPassword) {
       setError("Choose a new password that is different from your current password.");
       return;
     }
 
     setIsSubmitting(true);
 
-    const { error: currentPasswordError } = await supabase.auth.signInWithPassword({
-      email,
-      password: currentPassword,
-    });
+    if (!isRecovery) {
+      const { error: currentPasswordError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
 
-    if (currentPasswordError) {
-      setError(currentPasswordError.message);
-      setIsSubmitting(false);
-      return;
+      if (currentPasswordError) {
+        setError(currentPasswordError.message);
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     const { error: updateError } = await supabase.auth.updateUser({
@@ -101,32 +106,34 @@ export default function ChangePasswordPage() {
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 14 }}>
-            <label
-              htmlFor="current-password"
-              style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: "#64748b" }}
-            >
-              CURRENT PASSWORD
-            </label>
-            <input
-              id="current-password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={currentPassword}
-              onChange={(event) => setCurrentPassword(event.target.value)}
-              style={{
-                width: "100%",
-                background: "#111827",
-                border: "1px solid #334155",
-                borderRadius: 10,
-                color: "#e2e8f0",
-                padding: "12px 14px",
-                fontSize: 14,
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
+          {!isRecovery ? (
+            <div style={{ marginBottom: 14 }}>
+              <label
+                htmlFor="current-password"
+                style={{ display: "block", marginBottom: 6, fontSize: 12, fontWeight: 700, color: "#64748b" }}
+              >
+                CURRENT PASSWORD
+              </label>
+              <input
+                id="current-password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                style={{
+                  width: "100%",
+                  background: "#111827",
+                  border: "1px solid #334155",
+                  borderRadius: 10,
+                  color: "#e2e8f0",
+                  padding: "12px 14px",
+                  fontSize: 14,
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+          ) : null}
 
           <div style={{ marginBottom: 14 }}>
             <label

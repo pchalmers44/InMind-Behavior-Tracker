@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import ExcelJS from "exceljs";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { isObservationAdmin } from "@/lib/permissions";
 
 type ObservationRow = {
   id: string;
@@ -384,16 +385,17 @@ async function buildOrganizationalExport(
   scope: OrganizationalReportScope,
   format: string,
   dateRange: ReportDateRange,
-  userId: string
+  userId: string,
+  canManageAllObservations: boolean
 ) {
   let query = supabase
     .from("visits")
     .select("*")
-    .eq("created_by", userId)
     .eq("district", scope.district)
     .order("start_time", { ascending: false })
     .limit(10000);
 
+  if (!canManageAllObservations) query = query.eq("created_by", userId);
   if (scope.school) query = query.eq("school_name", scope.school);
 
   const { data, error } = await query;
@@ -594,8 +596,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Invalid authentication." }, { status: 401 });
     }
 
+    const canManageAllObservations = isObservationAdmin(user);
+
     if (district && !student && !teacher) {
-      return buildOrganizationalExport(supabase, { district, school: school || undefined, dateRangeLabel }, format, dateRange, user.id);
+      return buildOrganizationalExport(
+        supabase,
+        { district, school: school || undefined, dateRangeLabel },
+        format,
+        dateRange,
+        user.id,
+        canManageAllObservations
+      );
     }
 
     const selectWithType =
@@ -606,10 +617,10 @@ export async function GET(req: NextRequest) {
       let q = supabase
         .from("observations")
         .select(select)
-        .eq("created_by", user.id)
         .order("created_at", { ascending: false })
         .limit(10000);
 
+      if (!canManageAllObservations) q = q.eq("created_by", user.id);
       if (student) q = q.eq("student_name", student);
       if (teacher) q = q.eq("teacher_name", teacher);
       if (school) q = q.eq("school", school);

@@ -33,7 +33,11 @@ export default function LoginPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        router.replace("/change-password?recovery=1");
+        return;
+      }
       if (session) {
         router.replace("/");
       }
@@ -81,7 +85,7 @@ export default function LoginPage() {
       typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL ?? "";
 
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-      redirectTo: origin ? `${origin}/login` : undefined,
+      redirectTo: origin ? `${origin}/change-password?recovery=1` : undefined,
     });
 
     if (resetError) {

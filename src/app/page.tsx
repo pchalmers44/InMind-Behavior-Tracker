@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { GRADE_OPTIONS } from "@/lib/grades";
 import {
@@ -1343,7 +1344,6 @@ function ActiveVisit({
     if (!behaviors.find(b => b.id === bDef.id)) {
       setBehaviors(prev => [...prev, { ...bDef, count: 0, intensity: null, occurrences: [] }]);
     }
-    setShowAddBehavior(false);
   };
 
   const addCustomBehavior = () => {
@@ -1361,7 +1361,6 @@ function ActiveVisit({
     };
     setBehaviors(prev => [...prev, nb]);
     setCustomBehavior({ label: "", type: "frequency", behaviorType: undefined });
-    setShowAddBehavior(false);
   };
 
   const removeBehavior = (bid: string) => {
@@ -1649,7 +1648,6 @@ function ActiveFbaVisit({
     if (!behaviors.find((b) => b.id === bDef.id)) {
       setBehaviors((prev) => [...prev, { ...bDef, count: 0, intensity: null, occurrences: [] }]);
     }
-    setShowAddBehavior(false);
   };
 
   const addCustomBehavior = () => {
@@ -1667,7 +1665,6 @@ function ActiveFbaVisit({
     };
     setBehaviors((prev) => [...prev, nb]);
     setCustomBehavior({ label: "", type: "frequency", behaviorType: undefined });
-    setShowAddBehavior(false);
   };
 
   const removeBehavior = (bid: string) => {
@@ -3359,6 +3356,7 @@ function Reports({ visits }: { visits: Visit[] }) {
 // --- Main App ---
 function PageInner() {
   const { user } = useAuth();
+  const canManageAllObservations = isObservationAdmin(user);
   const [data, setData] = useState<DataState | null>(null);
   const [screen, setScreen] = useState<"home" | "new-visit" | "active" | "history" | "reports">("home"); // home | new-visit | active | history | reports
   const [activeVisit, setActiveVisit] = useState<Visit | null>(null);
@@ -3415,11 +3413,14 @@ function PageInner() {
 
       console.info("[visits] Fetch start: visits table");
       try {
-        const { data: visits, error } = await supabase
+        let query = supabase
           .from("visits")
           .select("*")
-          .eq("created_by", user.id)
           .order("start_time", { ascending: false });
+
+        if (!canManageAllObservations) query = query.eq("created_by", user.id);
+
+        const { data: visits, error } = await query;
 
         if (error) {
           logSupabaseError("[visits] Fetch error", error);
@@ -3470,7 +3471,7 @@ function PageInner() {
     };
 
     fetchPersistedVisits();
-  }, [user?.id]);
+  }, [canManageAllObservations, user?.id]);
 
   const persistData = useCallback((d: DataState) => {
     setData(d);
@@ -3531,132 +3532,136 @@ function PageInner() {
     setScreen("active");
   };
 
-  const completeVisit = (completedVisit: Visit) => {
+  const completeVisit = async (completedVisit: Visit) => {
+    if (!user?.id) {
+      console.error("[visits] Save blocked: no authenticated user found.");
+      return;
+    }
+
     const isEditing = editingVisitId === completedVisit.id;
     const completedWithTimestamp: Visit = isEditing
       ? { ...completedVisit, updatedAt: completedVisit.updatedAt ?? new Date().toISOString() }
       : completedVisit;
+
+    const logSupabaseError = (label: string, error: any) => {
+      if (!error) return;
+      console.error(label, {
+        message: error.message,
+        details: (error as any).details,
+        hint: (error as any).hint,
+        code: (error as any).code,
+        raw: error,
+      });
+    };
+
+    const visitObjectBase = {
+      subject_name: completedVisit.subjectName,
+      observer_name: completedVisit.observerName,
+      type: completedVisit.type ?? "",
+      district: completedVisit.district ?? "",
+      school_name: completedVisit.schoolName ?? "",
+      grade: completedVisit.grade ?? "",
+      total_students: completedVisit.totalStudents ?? 0,
+      start_time: completedVisit.startTime ? new Date(completedVisit.startTime).getTime() : null,
+      end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
+      total_duration: completedVisit.totalDuration ?? null,
+      behaviors: completedVisit.behaviors ?? [],
+      notes: completedVisit.notes ?? null,
+      recommendations: completedVisit.recommendations ?? null,
+      implementation_status: completedVisit.implementationStatus ?? null,
+      implementation_notes: completedVisit.implementationNotes ?? null,
+    };
+
+    const visitObject = {
+      ...visitObjectBase,
+      // For forward compatibility with schemas that store the observation type separately.
+      ...(completedVisit.type ? { observation_type: completedVisit.type } : {}),
+      ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
+      ...(completedVisit.type === "fba"
+        ? {
+          abc_entries: completedVisit.abcEntries ?? [],
+          latency_records: completedVisit.latencyRecords ?? [],
+          fba_latency_events: completedVisit.fbaLatencyEvents ?? [],
+          interval_records: completedVisit.intervalRecords ?? [],
+          interval_length_sec: completedVisit.intervalLengthSec ?? null,
+          fba_interval_sessions: completedVisit.fbaIntervalSessions ?? [],
+        }
+        : {}),
+    };
+
+    console.info(isEditing ? "[visits] Update start" : "[visits] Insert start", {
+      type: completedVisit.type,
+      subject: completedVisit.subjectName,
+      startTime: completedVisit.startTime,
+    });
+
+    const missingColumnPattern =
+      /(is_first_visit|district|implementation_status|implementation_notes|observation_type|notes|recommendations|abc_entries|latency_records|fba_latency_events|interval_records|interval_length_sec|fba_interval_sessions|updated_at)/i;
+
+    if (isEditing) {
+      let updateObject: Record<string, unknown> = { ...visitObject, updated_at: completedWithTimestamp.updatedAt };
+      let updateQuery = supabase
+        .from("visits")
+        .update(updateObject)
+        .eq("id", completedVisit.id);
+      if (!canManageAllObservations) updateQuery = updateQuery.eq("created_by", user.id);
+      let updateResult = await updateQuery.select();
+
+      if (updateResult.error && missingColumnPattern.test(updateResult.error.message || "")) {
+        logSupabaseError("[visits] Update retry due to missing column(s)", updateResult.error);
+        updateObject = { ...visitObjectBase, updated_at: completedWithTimestamp.updatedAt };
+        updateQuery = supabase
+          .from("visits")
+          .update(updateObject)
+          .eq("id", completedVisit.id);
+        if (!canManageAllObservations) updateQuery = updateQuery.eq("created_by", user.id);
+        updateResult = await updateQuery.select();
+      }
+
+      if (updateResult.error) {
+        logSupabaseError("[visits] Update error", updateResult.error);
+        return;
+      }
+
+      if (!updateResult.data?.length) {
+        console.error("[visits] Update blocked: no owned visit row was updated.", { id: completedVisit.id });
+        return;
+      }
+
+      console.info("[visits] Update success", { rowsUpdated: updateResult.data.length });
+      console.debug("[visits] Update response data:", updateResult.data);
+    } else {
+      const insertObject = {
+        id: completedVisit.id,
+        created_by: user.id,
+        ...visitObject,
+      };
+      const insertObjectBase = {
+        id: insertObject.id,
+        created_by: user.id,
+        ...visitObjectBase,
+      };
+      let insertResult = await supabase.from("visits").insert([insertObject]).select();
+      if (insertResult.error && missingColumnPattern.test(insertResult.error.message || "")) {
+        logSupabaseError("[visits] Insert retry due to missing column(s)", insertResult.error);
+        insertResult = await supabase.from("visits").insert([insertObjectBase]).select();
+      }
+
+      if (insertResult.error) {
+        logSupabaseError("[visits] Insert error", insertResult.error);
+        return;
+      }
+
+      console.info("[visits] Insert success", { rowsInserted: insertResult.data?.length ?? 0 });
+      console.debug("[visits] Insert response data:", insertResult.data);
+    }
+
     const updatedVisits = isEditing
       ? (data?.visits || []).map((visit) => (visit.id === completedWithTimestamp.id ? completedWithTimestamp : visit))
       : [...(data?.visits || []), completedWithTimestamp];
     const updated: DataState = { ...(data as DataState), visits: updatedVisits };
 
     setData(updated);
-
-    (async () => {
-      const logSupabaseError = (label: string, error: any) => {
-        if (!error) return;
-        console.error(label, {
-          message: error.message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-          code: (error as any).code,
-          raw: error,
-        });
-      };
-
-      const visitObjectBase = {
-        subject_name: completedVisit.subjectName,
-        observer_name: completedVisit.observerName,
-        type: completedVisit.type ?? "",
-        district: completedVisit.district ?? "",
-        school_name: completedVisit.schoolName ?? "",
-        grade: completedVisit.grade ?? "",
-        total_students: completedVisit.totalStudents ?? 0,
-        start_time: completedVisit.startTime ? new Date(completedVisit.startTime).getTime() : null,
-        end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
-        total_duration: completedVisit.totalDuration ?? null,
-        behaviors: completedVisit.behaviors ?? [],
-        notes: completedVisit.notes ?? null,
-        recommendations: completedVisit.recommendations ?? null,
-        implementation_status: completedVisit.implementationStatus ?? null,
-        implementation_notes: completedVisit.implementationNotes ?? null,
-      };
-
-      const visitObject = {
-        ...visitObjectBase,
-        // For forward compatibility with schemas that store the observation type separately.
-        ...(completedVisit.type ? { observation_type: completedVisit.type } : {}),
-        ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
-        ...(completedVisit.type === "fba"
-          ? {
-            abc_entries: completedVisit.abcEntries ?? [],
-            latency_records: completedVisit.latencyRecords ?? [],
-            fba_latency_events: completedVisit.fbaLatencyEvents ?? [],
-            interval_records: completedVisit.intervalRecords ?? [],
-            interval_length_sec: completedVisit.intervalLengthSec ?? null,
-            fba_interval_sessions: completedVisit.fbaIntervalSessions ?? [],
-          }
-          : {}),
-      };
-
-      console.info(isEditing ? "[visits] Update start" : "[visits] Insert start", {
-        type: completedVisit.type,
-        subject: completedVisit.subjectName,
-        startTime: completedVisit.startTime,
-      });
-
-      if (!user?.id) {
-        logSupabaseError("[visits] Insert error", new Error("No authenticated user found."));
-        return;
-      }
-
-      const missingColumnPattern =
-        /(is_first_visit|district|implementation_status|implementation_notes|observation_type|notes|recommendations|abc_entries|latency_records|fba_latency_events|interval_records|interval_length_sec|fba_interval_sessions|updated_at)/i;
-
-      if (isEditing) {
-        let updateObject: Record<string, unknown> = { ...visitObject, updated_at: completedWithTimestamp.updatedAt };
-        let updateResult = await supabase
-          .from("visits")
-          .update(updateObject)
-          .eq("id", completedVisit.id)
-          .eq("created_by", user.id)
-          .select();
-
-        if (updateResult.error && missingColumnPattern.test(updateResult.error.message || "")) {
-          logSupabaseError("[visits] Update retry due to missing column(s)", updateResult.error);
-          updateObject = { ...visitObjectBase, updated_at: completedWithTimestamp.updatedAt };
-          updateResult = await supabase
-            .from("visits")
-            .update(updateObject)
-            .eq("id", completedVisit.id)
-            .eq("created_by", user.id)
-            .select();
-        }
-
-        if (updateResult.error) {
-          logSupabaseError("[visits] Update error", updateResult.error);
-        } else {
-          console.info("[visits] Update success", { rowsUpdated: updateResult.data?.length ?? 0 });
-        }
-
-        console.debug("[visits] Update response data:", updateResult.data);
-      } else {
-        const insertObject = {
-          id: completedVisit.id,
-          created_by: user.id,
-          ...visitObject,
-        };
-        const insertObjectBase = {
-          id: insertObject.id,
-          created_by: user.id,
-          ...visitObjectBase,
-        };
-        let insertResult = await supabase.from("visits").insert([insertObject]).select();
-        if (insertResult.error && missingColumnPattern.test(insertResult.error.message || "")) {
-          logSupabaseError("[visits] Insert retry due to missing column(s)", insertResult.error);
-          insertResult = await supabase.from("visits").insert([insertObjectBase]).select();
-        }
-
-        if (insertResult.error) {
-          logSupabaseError("[visits] Insert error", insertResult.error);
-        } else {
-          console.info("[visits] Insert success", { rowsInserted: insertResult.data?.length ?? 0 });
-        }
-
-        console.debug("[visits] Insert response data:", insertResult.data);
-      }
-    })();
 
     setActiveVisit(null);
     setEditingVisitId(null);

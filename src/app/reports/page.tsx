@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 type VisitRow = {
@@ -164,27 +165,33 @@ function filterReportVisits(rows: VisitRow[], scope: ReportScope, district: stri
   });
 }
 
-async function loadDistrictOptions(userId: string) {
-  const { data, error } = await supabase
+async function loadDistrictOptions(userId: string, canManageAllObservations: boolean) {
+  let query = supabase
     .from("visits")
     .select("district")
-    .eq("created_by", userId)
     .limit(10000);
+
+  if (!canManageAllObservations) query = query.eq("created_by", userId);
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return getUniqueDistricts((data || []) as VisitRow[]);
 }
 
-async function loadVisitsForDistrict(district: string, userId: string) {
+async function loadVisitsForDistrict(district: string, userId: string, canManageAllObservations: boolean) {
   if (!district.trim()) return [];
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("visits")
     .select("type, subject_name, school_name, district, start_time, total_duration, implementation_status, behaviors")
-    .eq("created_by", userId)
     .eq("district", district)
     .order("start_time", { ascending: false })
     .limit(5000);
+
+  if (!canManageAllObservations) query = query.eq("created_by", userId);
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return ((data || []) as VisitRow[]).filter((row) => {
@@ -269,6 +276,7 @@ function ReportMetadataPanel({ metadata }: { metadata: ReportMetadata }) {
 
 export default function ReportsPage() {
   const { user } = useAuth();
+  const canManageAllObservations = isObservationAdmin(user);
   const [reportScope, setReportScope] = useState<ReportScope>("district");
   const [school, setSchool] = useState("");
   const [district, setDistrict] = useState("");
@@ -297,7 +305,7 @@ export default function ReportsPage() {
       }
       console.info("[reports] Loading district options from visits...");
       try {
-        const nextDistricts = await loadDistrictOptions(user.id);
+        const nextDistricts = await loadDistrictOptions(user.id, canManageAllObservations);
         if (cancelled) return;
         setDistricts(nextDistricts);
       } catch (error) {
@@ -312,7 +320,7 @@ export default function ReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [canManageAllObservations, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -324,7 +332,7 @@ export default function ReportsPage() {
       setError(null);
       console.info("[reports] Loading schools from visits for district:", district);
       try {
-        const districtVisits = await loadVisitsForDistrict(district, user.id);
+        const districtVisits = await loadVisitsForDistrict(district, user.id, canManageAllObservations);
         if (cancelled) return;
         setVisits(districtVisits);
         setSchools(getUniqueSchools(districtVisits));
@@ -340,7 +348,7 @@ export default function ReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [district, user?.id]);
+  }, [canManageAllObservations, district, user?.id]);
 
   const canDownload = useMemo(() => {
     return !loadingOptions && !loadingSchools && !downloading;

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { buildIntensityTrendLabel, normalizeBehaviorOccurrences } from "@/lib/behavior-intensity";
 
@@ -135,6 +136,7 @@ function MiniLineChart({
 
 export default function FbaReportsPage() {
   const { user } = useAuth();
+  const canManageAllObservations = isObservationAdmin(user);
   const [student, setStudent] = useState("");
   const [behavior, setBehavior] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -158,13 +160,16 @@ export default function FbaReportsPage() {
         return;
       }
       console.info("[fba-reports] Loading student options (type=fba)...");
-      const { data, error } = await supabase
+      let query = supabase
         .from("visits")
         .select("subject_name, type, start_time")
-        .eq("created_by", user.id)
         .eq("type", "fba")
         .order("start_time", { ascending: false })
         .limit(10000);
+
+      if (!canManageAllObservations) query = query.eq("created_by", user.id);
+
+      const { data, error } = await query;
 
       if (cancelled) return;
       if (error) {
@@ -188,7 +193,7 @@ export default function FbaReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [canManageAllObservations, user?.id]);
 
   const canRun = useMemo(() => {
     return !loading && student.trim().length > 0;
@@ -211,11 +216,12 @@ export default function FbaReportsPage() {
         .select(
           "id, type, subject_name, observer_name, grade, district, school_name, start_time, end_time, total_duration, abc_entries, behaviors, fba_latency_events, fba_interval_sessions"
         )
-        .eq("created_by", user.id)
         .eq("type", "fba")
         .eq("subject_name", studentName)
         .order("start_time", { ascending: true })
         .limit(5000);
+
+      if (!canManageAllObservations) query = query.eq("created_by", user.id);
 
       if (startDate) {
         const ms = new Date(`${startDate}T00:00:00`).getTime();
