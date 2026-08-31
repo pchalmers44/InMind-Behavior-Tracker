@@ -1,5 +1,6 @@
 ﻿"use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect, @next/next/no-page-custom-font */
 import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
@@ -7,6 +8,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { DeleteReportDialog, ReportToastMessage, TrashButton, type ReportToast } from "@/components/reports/DeleteReportControls";
 import { GRADE_OPTIONS } from "@/lib/grades";
 import {
   buildIntensityTrendLabel,
@@ -2856,7 +2858,15 @@ function ReportBarChart({ title, data }: { title: string; data: ReportChartDatum
 }
 
 // --- Reports View ---
-function Reports({ visits }: { visits: Visit[] }) {
+function Reports({
+  visits,
+  canDeleteReports,
+  onDeleteReport,
+}: {
+  visits: Visit[];
+  canDeleteReports: boolean;
+  onDeleteReport: (visitId: string) => Promise<void>;
+}) {
   const [filter, setFilter] = useState("all");
   const [selectedSubject, setSelectedSubject] = useState("all");
   const [reportScope, setReportScope] = useState<ReportScope>("district");
@@ -2867,6 +2877,9 @@ function Reports({ visits }: { visits: Visit[] }) {
   const [customEndDate, setCustomEndDate] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Visit | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [reportToast, setReportToast] = useState<ReportToast>(null);
 
   // FBA observations are excluded from aggregated reports (school/district/teacher trends).
   const reportableVisits = useMemo(() => visits.filter((v) => v.type !== "fba"), [visits]);
@@ -3031,6 +3044,24 @@ function Reports({ visits }: { visits: Visit[] }) {
     (filter === "all" || v.type === filter) &&
     (selectedSubject === "all" || v.subjectName === selectedSubject)
   ).sort((a, b) => b.startTime - a.startTime);
+
+  const confirmDeleteReport = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    setReportError(null);
+    try {
+      await onDeleteReport(deleteTarget.id);
+      setDeleteTarget(null);
+      setReportToast({ type: "success", message: "Report deleted successfully." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete report.";
+      setReportError(message);
+      setReportToast({ type: "error", message });
+    } finally {
+      setIsDeleting(false);
+      window.setTimeout(() => setReportToast(null), 3200);
+    }
+  };
 
   // Aggregate behavior trends
   const behaviorTrends: Record<string, { total: number; visits: number; type: string }> = {};
@@ -3343,11 +3374,69 @@ function Reports({ visits }: { visits: Visit[] }) {
         </div>
       )}
 
+      {filtered.length > 0 && (
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 12 }}>OBSERVATIONS</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {filtered.map((visit) => (
+              <div
+                key={visit.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: 10,
+                  padding: "10px 12px",
+                }}
+              >
+                <div>
+                  <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 800 }}>{visit.subjectName}</div>
+                  <div style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>
+                    {visit.type === "classroom" ? "Classroom" : "Student"} | {visit.schoolName || "No school"} | {dateStr(visit.startTime)}
+                  </div>
+                </div>
+                {canDeleteReports && (
+                  <TrashButton
+                    onClick={() => setDeleteTarget(visit)}
+                    disabled={isDeleting}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      display: "grid",
+                      placeItems: "center",
+                      flexShrink: 0,
+                      background: "#450a0a",
+                      border: "1px solid #7f1d1d",
+                      borderRadius: 8,
+                      color: "#fca5a5",
+                      cursor: isDeleting ? "not-allowed" : "pointer",
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {filtered.length === 0 && (
         <div style={{
           textAlign: "center", padding: 40, color: "#475569", fontSize: 14,
           background: "#1e293b", borderRadius: 12, border: "1px dashed #334155"
         }}>No visits match the current filters.</div>
+      )}
+      <ReportToastMessage toast={reportToast} />
+      {deleteTarget && (
+        <DeleteReportDialog
+          isDeleting={isDeleting}
+          onCancel={() => {
+            if (!isDeleting) setDeleteTarget(null);
+          }}
+          onConfirm={confirmDeleteReport}
+        />
       )}
     </div>
   );
@@ -3540,7 +3629,7 @@ function PageInner() {
 
     const isEditing = editingVisitId === completedVisit.id;
     const completedWithTimestamp: Visit = isEditing
-      ? { ...completedVisit, updatedAt: completedVisit.updatedAt ?? new Date().toISOString() }
+      ? { ...completedVisit, updatedAt: new Date().toISOString() }
       : completedVisit;
 
     const logSupabaseError = (label: string, error: any) => {
@@ -3680,6 +3769,31 @@ function PageInner() {
     });
     setImplementationStatus("");
     router.push("/?step=firstVisit");
+  };
+
+  const deleteReportVisit = async (visitId: string) => {
+    if (!user?.id || !canManageAllObservations) {
+      throw new Error("You do not have permission to delete reports.");
+    }
+
+    const { data: deletedRows, error } = await supabase
+      .from("visits")
+      .delete()
+      .eq("id", visitId)
+      .select("id");
+
+    if (error) throw error;
+    if (!deletedRows?.length) throw new Error("Report was not deleted.");
+
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            visits: prev.visits.filter((visit) => visit.id !== visitId),
+          }
+        : prev
+    );
+    setSelectedVisit((prev) => (prev?.id === visitId ? null : prev));
   };
 
   const allVisits = (data?.visits || []).sort((a, b) => b.startTime - a.startTime);
@@ -4131,7 +4245,13 @@ function PageInner() {
             )}
 
             {/* Reports */}
-            {tab === "reports" && <Reports visits={allVisits} />}
+            {tab === "reports" && (
+              <Reports
+                visits={allVisits}
+                canDeleteReports={canManageAllObservations}
+                onDeleteReport={deleteReportVisit}
+              />
+            )}
           </>
         )}
       </div>

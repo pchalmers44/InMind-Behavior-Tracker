@@ -88,7 +88,7 @@ begin
         execute format('alter table public.%I validate constraint %I', target_table, not_null_constraint);
       end if;
     else
-      raise notice 'public.% has % existing NULL created_by row(s); new NULL created_by writes are blocked, but validate the constraint after manual backfill.',
+      raise exception 'public.% has % existing NULL created_by row(s). Run a manual ownership backfill before enabling RLS so existing production data is not hidden.',
         target_table,
         null_owner_count;
     end if;
@@ -96,11 +96,12 @@ begin
     select_policy := target_table || '_select_own';
     insert_policy := target_table || '_insert_own';
     update_policy := target_table || '_update_own';
-    delete_policy := target_table || '_delete_own';
+    delete_policy := target_table || '_delete_admin';
 
     execute format('drop policy if exists %I on public.%I', select_policy, target_table);
     execute format('drop policy if exists %I on public.%I', insert_policy, target_table);
     execute format('drop policy if exists %I on public.%I', update_policy, target_table);
+    execute format('drop policy if exists %I on public.%I', target_table || '_delete_own', target_table);
     execute format('drop policy if exists %I on public.%I', delete_policy, target_table);
 
     execute format(
@@ -119,7 +120,7 @@ begin
       target_table
     );
     execute format(
-      'create policy %I on public.%I for delete to authenticated using (created_by = auth.uid() or public.is_observation_admin())',
+      'create policy %I on public.%I for delete to authenticated using (public.is_observation_admin())',
       delete_policy,
       target_table
     );

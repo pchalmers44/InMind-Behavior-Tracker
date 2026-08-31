@@ -1,10 +1,12 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react/no-unescaped-entities */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { DeleteReportDialog, ReportToastMessage, TrashButton, type ReportToast } from "@/components/reports/DeleteReportControls";
 import { buildIntensityTrendLabel, normalizeBehaviorOccurrences } from "@/lib/behavior-intensity";
 
 type Behavior = {
@@ -148,6 +150,9 @@ export default function FbaReportsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<FbaVisitRow[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<FbaVisitRow | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [toast, setToast] = useState<ReportToast>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,6 +349,38 @@ export default function FbaReportsPage() {
     };
   }, [sessions, behavior]);
 
+  const confirmDeleteReport = async () => {
+    if (!deleteTarget) return;
+    if (!canManageAllObservations) {
+      setToast({ type: "error", message: "You do not have permission to delete reports." });
+      return;
+    }
+
+    setIsDeleting(true);
+    setError(null);
+    try {
+      const { data: deletedRows, error: deleteError } = await supabase
+        .from("visits")
+        .delete()
+        .eq("id", deleteTarget.id)
+        .select("id");
+
+      if (deleteError) throw deleteError;
+      if (!deletedRows?.length) throw new Error("Report was not deleted.");
+
+      setSessions((prev) => prev.filter((session) => session.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      setToast({ type: "success", message: "Report deleted successfully." });
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : "Failed to delete report.";
+      setError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setIsDeleting(false);
+      window.setTimeout(() => setToast(null), 3200);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-5xl px-4 py-10">
@@ -474,7 +511,9 @@ export default function FbaReportsPage() {
               </p>
 
               <div className="mt-4 grid gap-3">
-                {computed.perSession.map((s, idx) => (
+                {computed.perSession.map((s, idx) => {
+                  const sessionRow = sessions.find((session) => session.id === s.id) ?? null;
+                  return (
                   <div key={s.id} className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
@@ -485,7 +524,8 @@ export default function FbaReportsPage() {
                           ABC entries: {s.abcEntries.length} | Interval samples: {s.intervalTotal}
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
                           <div className="text-[10px] font-bold tracking-widest text-slate-500">FREQ</div>
                           <div className="text-lg font-extrabold text-indigo-300">{s.freqTotal}</div>
@@ -510,6 +550,14 @@ export default function FbaReportsPage() {
                           {Math.round(clamp01(s.intervalPct) * 100)}%
                         </div>
                       </div>
+                        </div>
+                        {canManageAllObservations && sessionRow && (
+                          <TrashButton
+                            onClick={() => setDeleteTarget(sessionRow)}
+                            disabled={isDeleting}
+                            className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg border border-red-900 bg-red-950 text-red-300 hover:border-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          />
+                        )}
                     </div>
                   </div>
 
@@ -565,10 +613,21 @@ export default function FbaReportsPage() {
                       </div>
                     )}
                   </div>
-                ))}
+                );
+                })}
               </div>
             </div>
           </>
+        )}
+        <ReportToastMessage toast={toast} />
+        {deleteTarget && (
+          <DeleteReportDialog
+            isDeleting={isDeleting}
+            onCancel={() => {
+              if (!isDeleting) setDeleteTarget(null);
+            }}
+            onConfirm={confirmDeleteReport}
+          />
         )}
       </div>
     </div>

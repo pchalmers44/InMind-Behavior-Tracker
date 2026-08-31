@@ -5,10 +5,13 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { DeleteReportDialog, ReportToastMessage, TrashButton, type ReportToast } from "@/components/reports/DeleteReportControls";
 
 type VisitRow = {
+  id: string;
   type: string | null;
   subject_name: string | null;
+  observer_name?: string | null;
   school_name: string | null;
   district: string | null;
   start_time?: number | string | null;
@@ -184,7 +187,7 @@ async function loadVisitsForDistrict(district: string, userId: string, canManage
 
   let query = supabase
     .from("visits")
-    .select("type, subject_name, school_name, district, start_time, total_duration, implementation_status, behaviors")
+    .select("id, type, subject_name, observer_name, school_name, district, start_time, total_duration, implementation_status, behaviors")
     .eq("district", district)
     .order("start_time", { ascending: false })
     .limit(5000);
@@ -292,6 +295,9 @@ export default function ReportsPage() {
   const [loadingSchools, setLoadingSchools] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<VisitRow | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [toast, setToast] = useState<ReportToast>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -508,6 +514,38 @@ export default function ReportsPage() {
     }
   };
 
+  const confirmDeleteReport = async () => {
+    if (!deleteTarget) return;
+    if (!canManageAllObservations) {
+      setToast({ type: "error", message: "You do not have permission to delete reports." });
+      return;
+    }
+
+    setIsDeleting(true);
+    setError(null);
+    try {
+      const { data: deletedRows, error: deleteError } = await supabase
+        .from("visits")
+        .delete()
+        .eq("id", deleteTarget.id)
+        .select("id");
+
+      if (deleteError) throw deleteError;
+      if (!deletedRows?.length) throw new Error("Report was not deleted.");
+
+      setVisits((prev) => prev.filter((visit) => visit.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      setToast({ type: "success", message: "Report deleted successfully." });
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : "Failed to delete report.";
+      setError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setIsDeleting(false);
+      window.setTimeout(() => setToast(null), 3200);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-3xl px-4 py-10">
@@ -683,9 +721,51 @@ export default function ReportsPage() {
           </div>
         )}
 
+        {selectedReportVisits.length > 0 && (
+          <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+            <div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-500">Observations</div>
+            <div className="grid gap-2">
+              {selectedReportVisits.map((visit) => (
+                <div
+                  key={visit.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2"
+                >
+                  <div>
+                    <div className="text-sm font-extrabold text-slate-100">{visit.subject_name || "Untitled observation"}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {(visit.type || "Observation").toLowerCase() === "classroom" ? "Classroom" : "Student"} |{" "}
+                      {visit.school_name || "No school"} | {formatReportDisplayDate(
+                        getVisitStartMs(visit) ? formatDateInput(new Date(getVisitStartMs(visit) as number)) : undefined
+                      )}
+                      {visit.observer_name ? ` | ${visit.observer_name}` : ""}
+                    </div>
+                  </div>
+                  {canManageAllObservations && (
+                    <TrashButton
+                      onClick={() => setDeleteTarget(visit)}
+                      disabled={isDeleting}
+                      className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg border border-red-900 bg-red-950 text-red-300 hover:border-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="mt-6 text-xs text-slate-500">
           Note: Filters are applied server-side in <code className="rounded bg-slate-900 px-1">/api/reports</code>.
         </div>
+        <ReportToastMessage toast={toast} />
+        {deleteTarget && (
+          <DeleteReportDialog
+            isDeleting={isDeleting}
+            onCancel={() => {
+              if (!isDeleting) setDeleteTarget(null);
+            }}
+            onConfirm={confirmDeleteReport}
+          />
+        )}
       </div>
     </div>
   );
