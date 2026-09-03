@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -25,6 +26,13 @@ export default function LoginPage() {
         return;
       }
       if (data.session) {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (!isMounted) return;
+        if (userError || !userData.user) {
+          if (isSubmittingRef.current) return;
+          await supabase.auth.signOut({ scope: "local" });
+          return;
+        }
         router.replace("/");
       }
     };
@@ -39,7 +47,15 @@ export default function LoginPage() {
         return;
       }
       if (session) {
-        router.replace("/");
+        void (async () => {
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (userError || !userData.user) {
+            if (isSubmittingRef.current) return;
+            await supabase.auth.signOut({ scope: "local" });
+            return;
+          }
+          router.replace("/");
+        })();
       }
     });
 
@@ -51,22 +67,34 @@ export default function LoginPage() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setError("");
     setMessage("");
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    await supabase.auth.signOut({ scope: "local" });
+
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
 
     if (signInError) {
+      isSubmittingRef.current = false;
       setError(signInError.message);
       setIsSubmitting(false);
       return;
     }
 
+    if (!data.session) {
+      isSubmittingRef.current = false;
+      setError("Sign in succeeded, but no session was returned. Please try again.");
+      setIsSubmitting(false);
+      return;
+    }
+
     router.replace("/");
+    router.refresh();
   };
 
   const handleForgotPassword = async () => {

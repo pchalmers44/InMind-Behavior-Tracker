@@ -252,13 +252,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
-    const syncSession = async () => {
-      const { data } = await supabase.auth.getSession();
+    const clearInvalidSession = async () => {
+      await supabase.auth.signOut({ scope: "local" });
       if (!isMounted) return;
-      setSession(data.session ?? null);
+      setSession(null);
       setIsLoading(false);
-      if (!data.session && !isLoginPage) {
+      if (!isLoginPage) {
         router.replace("/login");
+      }
+    };
+
+    const syncSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!isMounted) return;
+        if (error) {
+          await clearInvalidSession();
+          return;
+        }
+        if (data.session) {
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (!isMounted) return;
+          if (userError || !userData.user) {
+            await clearInvalidSession();
+            return;
+          }
+        }
+        setSession(data.session ?? null);
+        setIsLoading(false);
+        if (!data.session && !isLoginPage) {
+          router.replace("/login");
+        }
+      } catch {
+        await clearInvalidSession();
       }
     };
 
@@ -268,6 +294,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!isMounted) return;
+      if (nextSession) {
+        void (async () => {
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (!isMounted) return;
+          if (userError || !userData.user) {
+            await clearInvalidSession();
+            return;
+          }
+          setSession(nextSession);
+          setIsLoading(false);
+        })();
+        return;
+      }
       setSession(nextSession ?? null);
       setIsLoading(false);
       if (!nextSession && !isLoginPage) {
