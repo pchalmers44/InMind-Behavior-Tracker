@@ -21,6 +21,31 @@ type Behavior = {
   durationSec?: number;
 };
 
+type SupabaseDeleteError = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
+function formatDeleteFailedMessage(error: SupabaseDeleteError) {
+  return [
+    "Delete failed",
+    "",
+    "Code:",
+    error.code || "none",
+    "",
+    "Message:",
+    error.message || "none",
+    "",
+    "Details:",
+    error.details || "none",
+    "",
+    "Hint:",
+    error.hint || "none",
+  ].join("\n");
+}
+
 type AbcEntry = { antecedent: string; behavior: string; consequence: string };
 
 type FbaLatencyEvent = {
@@ -365,7 +390,10 @@ export default function FbaReportsPage() {
         .eq("id", deleteTarget.id)
         .select("id");
 
-      if (deleteError) throw deleteError;
+      if (deleteError) {
+        console.error("DELETE ERROR:", deleteError);
+        throw new Error(formatDeleteFailedMessage(deleteError));
+      }
       if (!deletedRows?.length) throw new Error("Report was not deleted.");
 
       setSessions((prev) => prev.filter((session) => session.id !== deleteTarget.id));

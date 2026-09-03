@@ -139,6 +139,7 @@ export function ReportToastMessage({ toast }: { toast: ReportToast }) {
         fontSize: 13,
         fontWeight: 800,
         padding: "10px 12px",
+        whiteSpace: "pre-line",
       }}
     >
       {toast.message}

@@ -36,6 +36,31 @@ type BehaviorType = "positive" | "challenging";
 
 type AbcEntry = { antecedent: string; behavior: string; consequence: string };
 
+type SupabaseDeleteError = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
+function formatDeleteFailedMessage(error: SupabaseDeleteError) {
+  return [
+    "Delete failed",
+    "",
+    "Code:",
+    error.code || "none",
+    "",
+    "Message:",
+    error.message || "none",
+    "",
+    "Details:",
+    error.details || "none",
+    "",
+    "Hint:",
+    error.hint || "none",
+  ].join("\n");
+}
+
 type FbaLatencyEvent = {
   behaviorId: string | null;
   behaviorLabel: string;
@@ -3782,7 +3807,10 @@ function PageInner() {
       .eq("id", visitId)
       .select("id");
 
-    if (error) throw error;
+    if (error) {
+      console.error("DELETE ERROR:", error);
+      throw new Error(formatDeleteFailedMessage(error));
+    }
     if (!deletedRows?.length) throw new Error("Report was not deleted.");
 
     setData((prev) =>

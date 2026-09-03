@@ -28,6 +28,31 @@ type ReportBehavior = {
   durationSec?: number | null;
 };
 
+type SupabaseDeleteError = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
+function formatDeleteFailedMessage(error: SupabaseDeleteError) {
+  return [
+    "Delete failed",
+    "",
+    "Code:",
+    error.code || "none",
+    "",
+    "Message:",
+    error.message || "none",
+    "",
+    "Details:",
+    error.details || "none",
+    "",
+    "Hint:",
+    error.hint || "none",
+  ].join("\n");
+}
+
 type ReportScope = "district" | "school";
 type ReportDatePreset = "last7" | "last30" | "last90" | "schoolYear" | "custom";
 
@@ -530,7 +555,10 @@ export default function ReportsPage() {
         .eq("id", deleteTarget.id)
         .select("id");
 
-      if (deleteError) throw deleteError;
+      if (deleteError) {
+        console.error("DELETE ERROR:", deleteError);
+        throw new Error(formatDeleteFailedMessage(deleteError));
+      }
       if (!deletedRows?.length) throw new Error("Report was not deleted.");
 
       setVisits((prev) => prev.filter((visit) => visit.id !== deleteTarget.id));
