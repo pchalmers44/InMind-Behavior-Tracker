@@ -93,6 +93,14 @@ export default function LoginPage() {
       return;
     }
 
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      isSubmittingRef.current = false;
+      setError(userError?.message || "Sign in succeeded, but the user profile could not be loaded. Please try again.");
+      setIsSubmitting(false);
+      return;
+    }
+
     router.replace("/");
     router.refresh();
   };

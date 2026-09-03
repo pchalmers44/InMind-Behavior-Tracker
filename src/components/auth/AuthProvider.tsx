@@ -248,6 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLoginPage = pathname === "/login";
   const [isLoading, setIsLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -256,6 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut({ scope: "local" });
       if (!isMounted) return;
       setSession(null);
+      setUser(null);
       setIsLoading(false);
       if (!isLoginPage) {
         router.replace("/login");
@@ -270,6 +272,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await clearInvalidSession();
           return;
         }
+        let verifiedUser: User | null = null;
         if (data.session) {
           const { data: userData, error: userError } = await supabase.auth.getUser();
           if (!isMounted) return;
@@ -277,8 +280,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await clearInvalidSession();
             return;
           }
+          verifiedUser = userData.user;
         }
         setSession(data.session ?? null);
+        setUser(verifiedUser);
         setIsLoading(false);
         if (!data.session && !isLoginPage) {
           router.replace("/login");
@@ -303,11 +308,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
           }
           setSession(nextSession);
+          setUser(userData.user);
           setIsLoading(false);
         })();
         return;
       }
       setSession(nextSession ?? null);
+      setUser(null);
       setIsLoading(false);
       if (!nextSession && !isLoginPage) {
         router.replace("/login");
@@ -322,6 +329,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
+    setUser(null);
     router.replace("/login");
   }, [router]);
 
@@ -329,10 +337,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       isLoading,
       session,
-      user: session?.user ?? null,
+      user,
       logout,
     }),
-    [isLoading, logout, session]
+    [isLoading, logout, session, user]
   );
 
   if (!isLoginPage && (isLoading || !session)) {
