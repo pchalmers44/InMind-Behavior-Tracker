@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { isObservationAdmin } from "@/lib/permissions";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,6 +34,10 @@ export default function LoginPage() {
           await supabase.auth.signOut({ scope: "local" });
           return;
         }
+        console.log("AUTH USER", userData.user);
+        console.log("APP METADATA", userData.user?.app_metadata);
+        console.log("ROLE", userData.user?.app_metadata?.role);
+        console.log("IS ADMIN", isObservationAdmin(userData.user));
         router.replace("/");
       }
     };
@@ -54,6 +59,10 @@ export default function LoginPage() {
             await supabase.auth.signOut({ scope: "local" });
             return;
           }
+          console.log("AUTH USER", userData.user);
+          console.log("APP METADATA", userData.user?.app_metadata);
+          console.log("ROLE", userData.user?.app_metadata?.role);
+          console.log("IS ADMIN", isObservationAdmin(userData.user));
           router.replace("/");
         })();
       }
@@ -100,6 +109,10 @@ export default function LoginPage() {
       setIsSubmitting(false);
       return;
     }
+    console.log("AUTH USER", userData.user);
+    console.log("APP METADATA", userData.user?.app_metadata);
+    console.log("ROLE", userData.user?.app_metadata?.role);
+    console.log("IS ADMIN", isObservationAdmin(userData.user));
 
     router.replace("/");
     router.refresh();

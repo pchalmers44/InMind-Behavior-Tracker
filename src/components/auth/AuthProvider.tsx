@@ -14,6 +14,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { isObservationAdmin } from "@/lib/permissions";
 
 type AuthContextValue = {
   isLoading: boolean;
@@ -280,6 +281,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await clearInvalidSession();
             return;
           }
+          console.log("AUTH USER", userData.user);
+          console.log("APP METADATA", userData.user?.app_metadata);
+          console.log("ROLE", userData.user?.app_metadata?.role);
+          console.log("IS ADMIN", isObservationAdmin(userData.user));
           verifiedUser = userData.user;
         }
         setSession(data.session ?? null);
@@ -307,6 +312,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await clearInvalidSession();
             return;
           }
+          console.log("AUTH USER", userData.user);
+          console.log("APP METADATA", userData.user?.app_metadata);
+          console.log("ROLE", userData.user?.app_metadata?.role);
+          console.log("IS ADMIN", isObservationAdmin(userData.user));
           setSession(nextSession);
           setUser(userData.user);
           setIsLoading(false);
