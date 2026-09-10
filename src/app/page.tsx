@@ -79,6 +79,24 @@ function formatSaveFailedMessage(error: SupabaseDeleteError) {
   ].join("\n");
 }
 
+function formatUpdateFailedMessage(error: SupabaseDeleteError) {
+  return [
+    "Update failed",
+    "",
+    "Code:",
+    error.code || "none",
+    "",
+    "Message:",
+    error.message || "none",
+    "",
+    "Details:",
+    error.details || "none",
+    "",
+    "Hint:",
+    error.hint || "none",
+  ].join("\n");
+}
+
 type FbaLatencyEvent = {
   behaviorId: string | null;
   behaviorLabel: string;
@@ -3790,11 +3808,24 @@ function PageInner() {
 
       if (updateResult.error) {
         logSupabaseError("[visits] Update error", updateResult.error);
+        setSaveToast({ type: "error", message: formatUpdateFailedMessage(updateResult.error) });
         return;
       }
 
       if (!updateResult.data?.length) {
         console.error("[visits] Update blocked: no owned visit row was updated.", { id: completedVisit.id });
+        setSaveToast({
+          type: "error",
+          message: [
+            "No observation was updated.",
+            "",
+            "This usually means:",
+            "",
+            "- the observation no longer exists",
+            "- you no longer own this observation",
+            "- your session is out of date",
+          ].join("\n"),
+        });
         return;
       }
 
