@@ -61,6 +61,24 @@ function formatDeleteFailedMessage(error: SupabaseDeleteError) {
   ].join("\n");
 }
 
+function formatSaveFailedMessage(error: SupabaseDeleteError) {
+  return [
+    "Save failed",
+    "",
+    "Code:",
+    error.code || "none",
+    "",
+    "Message:",
+    error.message || "none",
+    "",
+    "Details:",
+    error.details || "none",
+    "",
+    "Hint:",
+    error.hint || "none",
+  ].join("\n");
+}
+
 type FbaLatencyEvent = {
   behaviorId: string | null;
   behaviorLabel: string;
@@ -3489,6 +3507,7 @@ function PageInner() {
   const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
   const [implementationStatus, setImplementationStatus] = useState("");
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
+  const [saveToast, setSaveToast] = useState<ReportToast>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlFirstVisitParam = searchParams.get("firstVisit");
@@ -3763,6 +3782,7 @@ function PageInner() {
 
       if (insertResult.error) {
         logSupabaseError("[visits] Insert error", insertResult.error);
+        setSaveToast({ type: "error", message: formatSaveFailedMessage(insertResult.error) });
         return;
       }
 
@@ -4292,6 +4312,7 @@ function PageInner() {
           onEdit={() => editVisit(selectedVisit)}
         />
       )}
+      <ReportToastMessage toast={saveToast} />
     </div>
   );
 }
