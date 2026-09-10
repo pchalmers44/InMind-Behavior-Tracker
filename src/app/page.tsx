@@ -349,22 +349,31 @@ type BehaviorSetupSectionProps = {
 
 function useBehaviorDurationTimer(
   activeTimers: MutableRefObject<Record<string, boolean>>,
+  durationLastTicks: MutableRefObject<Record<string, number>>,
   setDurationTimers: Dispatch<SetStateAction<Record<string, number>>>
 ) {
   useEffect(() => {
     const id = setInterval(() => {
       setDurationTimers((prev) => {
+        const now = Date.now();
         const next = { ...prev };
         Object.keys(activeTimers.current).forEach((bid) => {
           if (activeTimers.current[bid]) {
-            next[bid] = (next[bid] || 0) + 1;
+            const lastTickAt = durationLastTicks.current[bid];
+            if (typeof lastTickAt === "number") {
+              const elapsedSec = Math.max(0, Math.floor((now - lastTickAt) / 1000));
+              if (elapsedSec > 0) {
+                next[bid] = (next[bid] || 0) + elapsedSec;
+                durationLastTicks.current[bid] = lastTickAt + elapsedSec * 1000;
+              }
+            }
           }
         });
         return next;
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [activeTimers, setDurationTimers]);
+  }, [activeTimers, durationLastTicks, setDurationTimers]);
 }
 
 function BehaviorSetupSection({
@@ -1306,6 +1315,7 @@ function ActiveVisit({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeTimers = useRef<Record<string, boolean>>({});
   const durationStarts = useRef<Record<string, number>>({});
+  const durationLastTicks = useRef<Record<string, number>>({});
 
   useEffect(() => {
     if (isEditing) return;
@@ -1315,24 +1325,31 @@ function ActiveVisit({
     return () => clearInterval(timerRef.current as any);
   }, [isEditing]);
 
-  useBehaviorDurationTimer(activeTimers, setDurationTimers);
+  useBehaviorDurationTimer(activeTimers, durationLastTicks, setDurationTimers);
 
   const toggleDuration = (bid: string) => {
     const behavior = behaviors.find((b) => b.id === bid);
     const isRunning = !!activeTimers.current[bid];
 
     if (!isRunning) {
-      durationStarts.current[bid] = Date.now();
+      const now = Date.now();
+      durationStarts.current[bid] = now;
+      durationLastTicks.current[bid] = now;
       activeTimers.current[bid] = true;
       setDurationTimers((prev) => ({ ...prev }));
       return;
     }
 
-    const startedAt = durationStarts.current[bid] ?? Date.now();
-    const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-    const timestamp = Date.now();
+    const now = Date.now();
+    const startedAt = durationStarts.current[bid] ?? now;
+    const lastTickAt = durationLastTicks.current[bid] ?? startedAt;
+    const durationSec = Math.max(0, Math.round((now - startedAt) / 1000));
+    const elapsedSec = Math.max(0, Math.floor((now - lastTickAt) / 1000));
+    const timestamp = now;
     activeTimers.current[bid] = false;
     delete durationStarts.current[bid];
+    delete durationLastTicks.current[bid];
+    setDurationTimers((prev) => ({ ...prev, [bid]: (prev[bid] || 0) + elapsedSec }));
     setBehaviors((prev) =>
       prev.map((b) =>
         b.id === bid
@@ -1412,6 +1429,7 @@ function ActiveVisit({
     setBehaviors(prev => prev.filter(b => b.id !== bid));
     delete activeTimers.current[bid];
     delete durationStarts.current[bid];
+    delete durationLastTicks.current[bid];
     if (pendingIntensity?.behaviorId === bid) setPendingIntensity(null);
   };
 
@@ -1432,9 +1450,14 @@ function ActiveVisit({
   };
 
   const handleComplete = () => {
+    const now = Date.now();
     const finalBehaviors = behaviors.map(b => ({
       ...b,
-      durationSec: b.type === "duration" ? (durationTimers[b.id] || 0) : undefined,
+      durationSec: b.type === "duration"
+        ? activeTimers.current[b.id] && typeof durationLastTicks.current[b.id] === "number"
+          ? (durationTimers[b.id] || 0) + Math.max(0, Math.floor((now - durationLastTicks.current[b.id]) / 1000))
+          : (durationTimers[b.id] || 0)
+        : undefined,
     }));
     onComplete({
       ...visit,
@@ -1596,6 +1619,7 @@ function ActiveFbaVisit({
   );
   const activeTimers = useRef<Record<string, boolean>>({});
   const durationStarts = useRef<Record<string, number>>({});
+  const durationLastTicks = useRef<Record<string, number>>({});
 
   const [showAddBehavior, setShowAddBehavior] = useState(false);
   const [pendingIntensity, setPendingIntensity] = useState<PendingIntensityPrompt | null>(null);
@@ -1669,7 +1693,7 @@ function ActiveFbaVisit({
     setIntervalRunning(false);
   }, [intervalCountdown, intervalRunning]);
 
-  useBehaviorDurationTimer(activeTimers, setDurationTimers);
+  useBehaviorDurationTimer(activeTimers, durationLastTicks, setDurationTimers);
 
   const addAbcEntry = () => {
     setAbcEntries((prev) => {
@@ -1716,6 +1740,7 @@ function ActiveFbaVisit({
     setBehaviors((prev) => prev.filter((b) => b.id !== bid));
     delete activeTimers.current[bid];
     delete durationStarts.current[bid];
+    delete durationLastTicks.current[bid];
     setDurationTimers((prev) => {
       const next = { ...prev };
       delete next[bid];
@@ -1759,17 +1784,24 @@ function ActiveFbaVisit({
     const isRunning = !!activeTimers.current[bid];
 
     if (!isRunning) {
-      durationStarts.current[bid] = Date.now();
+      const now = Date.now();
+      durationStarts.current[bid] = now;
+      durationLastTicks.current[bid] = now;
       activeTimers.current[bid] = true;
       setDurationTimers((prev) => ({ ...prev }));
       return;
     }
 
-    const startedAt = durationStarts.current[bid] ?? Date.now();
-    const durationSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-    const timestamp = Date.now();
+    const now = Date.now();
+    const startedAt = durationStarts.current[bid] ?? now;
+    const lastTickAt = durationLastTicks.current[bid] ?? startedAt;
+    const durationSec = Math.max(0, Math.round((now - startedAt) / 1000));
+    const elapsedSec = Math.max(0, Math.floor((now - lastTickAt) / 1000));
+    const timestamp = now;
     activeTimers.current[bid] = false;
     delete durationStarts.current[bid];
+    delete durationLastTicks.current[bid];
+    setDurationTimers((prev) => ({ ...prev, [bid]: (prev[bid] || 0) + elapsedSec }));
     setBehaviors((prev) =>
       prev.map((b) =>
         b.id === bid
@@ -1866,9 +1898,14 @@ function ActiveFbaVisit({
   };
 
   const handleComplete = () => {
+    const now = Date.now();
     const finalBehaviors = behaviors.map((b) => ({
       ...b,
-      durationSec: b.type === "duration" ? (durationTimers[b.id] || 0) : undefined,
+      durationSec: b.type === "duration"
+        ? activeTimers.current[b.id] && typeof durationLastTicks.current[b.id] === "number"
+          ? (durationTimers[b.id] || 0) + Math.max(0, Math.floor((now - durationLastTicks.current[b.id]) / 1000))
+          : (durationTimers[b.id] || 0)
+        : undefined,
     }));
 
     const intervalSessionsNext = (() => {
