@@ -597,7 +597,15 @@ function BehaviorSetupSection({
                           onClick={() =>
                             setBehaviors((prev) =>
                               prev.map((bb) =>
-                                bb.id === b.id ? { ...bb, count: Math.min(totalStudents || 99, (bb.count || 0) + 1) } : bb
+                                bb.id === b.id
+                                  ? {
+                                      ...bb,
+                                      count:
+                                        (bb.count || 0) >= (totalStudents || 99)
+                                          ? (bb.count || 0)
+                                          : Math.min(totalStudents || 99, (bb.count || 0) + 1),
+                                    }
+                                  : bb
                               )
                             )
                           }
@@ -1313,7 +1321,9 @@ function ActiveVisit({
   prevVisit?: Visit | null;
   isEditing?: boolean;
 }) {
-  const totalStudents = visit.totalStudents || null;
+  const [totalStudents, setTotalStudents] = useState<number | null>(() =>
+    visit.type === "classroom" ? Math.max(1, Math.floor(visit.totalStudents || 1)) : null
+  );
   const [elapsed, setElapsed] = useState(() => Math.max(0, Math.floor(visit.totalDuration || 0)));
   const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
   const [durationTimers, setDurationTimers] = useState<Record<string, number>>(() =>
@@ -1480,6 +1490,7 @@ function ActiveVisit({
     }));
     onComplete({
       ...visit,
+      totalStudents,
       behaviors: finalBehaviors,
       notes,
       recommendations,
@@ -1524,6 +1535,37 @@ function ActiveVisit({
           </div>
         </div>
       </div>
+
+      {visit.type === "classroom" && (
+        <div style={{
+          background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16,
+          border: "1px solid #f59e0b55"
+        }}>
+          <label htmlFor="active-total-students" style={{
+            display: "block", fontSize: 12, fontWeight: 700, color: "#f59e0b",
+            marginBottom: 8, letterSpacing: "0.06em"
+          }}>
+            TOTAL STUDENTS IN CLASS
+          </label>
+          <input
+            id="active-total-students"
+            type="number"
+            min="1"
+            step="1"
+            inputMode="numeric"
+            value={totalStudents ?? 1}
+            onChange={(event) => {
+              const digits = event.target.value.replace(/\D/g, "");
+              setTotalStudents(Math.max(1, Math.floor(Number(digits || "1"))));
+            }}
+            style={{
+              width: "100%", background: "#0f172a", border: "1px solid #f59e0b88",
+              borderRadius: 10, color: "#e2e8f0", padding: "10px 12px", fontSize: 14,
+              boxSizing: "border-box", fontFamily: "inherit", fontWeight: 800
+            }}
+          />
+        </div>
+      )}
 
       {/* Implementation follow-up */}
       {(prevVisit?.recommendations || isEditing || visit.implementationStatus) && (
