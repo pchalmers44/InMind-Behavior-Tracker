@@ -31,6 +31,8 @@ type Behavior = {
   durationSec?: number;
   custom?: boolean;
   note?: string;
+  studentCount?: number;
+  supportsStudentCount?: boolean;
   [key: string]: any;
 };
 
@@ -199,7 +201,7 @@ const BEHAVIOR_LIBRARY = {
     // Undesirable behaviors
     { id: "cls-negative-peer", label: "Negative Peer Interactions", type: "frequency", category: "challenging" },
     { id: "cls-off-task", label: "Off-Task", type: "frequency", category: "challenging", measureType: "student-count" },
-    { id: "cls-noncompliance", label: "Noncompliance", type: "frequency", category: "challenging" },
+    { id: "cls-noncompliance", label: "Noncompliance", type: "frequency", category: "challenging", supportsStudentCount: true },
     { id: "cls-disruption", label: "Disruption", type: "frequency", category: "challenging" },
     { id: "cls-eloping-seat", label: "Eloping from Seat", type: "frequency", category: "challenging" },
     { id: "cls-eloping-classroom", label: "Eloping from Classroom", type: "frequency", category: "challenging" },
@@ -208,11 +210,11 @@ const BEHAVIOR_LIBRARY = {
     // Desirable behaviors
     { id: "cls-positive-peer", label: "Positive Peer Interactions", type: "frequency", category: "positive" },
     { id: "cls-on-task", label: "On-Task", type: "frequency", category: "positive", measureType: "student-count" },
-    { id: "cls-following-directions", label: "Following Directions", type: "frequency", category: "positive" },
+    { id: "cls-following-directions", label: "Following Directions", type: "frequency", category: "positive", supportsStudentCount: true },
     { id: "cls-coping-strategies", label: "Positive Use of Coping Strategies", type: "frequency", category: "positive" },
     { id: "cls-praise", label: "Praise / Positive Feedback", type: "frequency", category: "positive" },
     { id: "cls-behavior-specific-praise", label: "Behavior-Specific Praise", type: "frequency", category: "positive" },
-    { id: "cls-smooth-transitions", label: "Smooth / Successful Transitions", type: "frequency", category: "positive" },
+    { id: "cls-smooth-transitions", label: "Smooth / Successful Transitions", type: "frequency", category: "positive", supportsStudentCount: true },
   ]
 };
 
@@ -452,6 +454,16 @@ function BehaviorSetupSection({
     setBehaviors((prev) => prev.map((behavior) => (behavior.id === behaviorId ? { ...behavior, durationSec } : behavior)));
   };
 
+  const updateStudentCount = (behaviorId: string, nextStudentCount: number) => {
+    const cappedCount = Math.min(
+      totalStudents || 0,
+      Math.max(0, Math.floor(Number.isFinite(nextStudentCount) ? nextStudentCount : 0))
+    );
+    setBehaviors((prev) =>
+      prev.map((behavior) => (behavior.id === behaviorId ? { ...behavior, studentCount: cappedCount } : behavior))
+    );
+  };
+
   const updateOccurrenceIntensity = (behaviorId: string, timestamp: number, intensity: number | null) => {
     setBehaviors((prev) =>
       prev.map((behavior) =>
@@ -650,6 +662,7 @@ function BehaviorSetupSection({
                     )}
                   </div>
                 ) : (
+                  <>
                   <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                     <button
                       onClick={() => updateFrequencyCount(b.id, (b.count || 0) - 1)}
@@ -712,6 +725,68 @@ function BehaviorSetupSection({
                       <div style={{ fontSize: 11, color: "#64748b" }}>rate</div>
                     </div>
                   </div>
+                  {b.supportsStudentCount && typeof totalStudents === "number" && (
+                    <div style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: "1px solid #334155",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      flexWrap: "wrap"
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Students</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button
+                            onClick={() => updateStudentCount(b.id, (b.studentCount || 0) - 1)}
+                            style={{
+                              background: "#334155",
+                              color: "#e2e8f0",
+                              border: "none",
+                              borderRadius: 8,
+                              width: 36,
+                              height: 36,
+                              fontSize: 20,
+                              fontWeight: 800,
+                              cursor: "pointer",
+                              lineHeight: 1,
+                            }}
+                          >
+                            -
+                          </button>
+                          <div style={{ textAlign: "center", minWidth: 50 }}>
+                            <div style={{ fontSize: 32, fontWeight: 900, color: "#38bdf8", lineHeight: 1 }}>{b.studentCount || 0}</div>
+                            <div style={{ fontSize: 10, color: "#64748b" }}>students</div>
+                          </div>
+                          <button
+                            onClick={() => updateStudentCount(b.id, (b.studentCount || 0) + 1)}
+                            style={{
+                              background: "#334155",
+                              color: "#e2e8f0",
+                              border: "none",
+                              borderRadius: 8,
+                              width: 36,
+                              height: 36,
+                              fontSize: 20,
+                              fontWeight: 800,
+                              cursor: "pointer",
+                              lineHeight: 1,
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 26, fontWeight: 900, color: "#f59e0b", lineHeight: 1 }}>
+                          {Math.round(((b.studentCount || 0) / totalStudents) * 100)}%
+                        </div>
+                        <div style={{ fontSize: 10, color: "#64748b" }}>of {totalStudents} students</div>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </div>
             ) : (
