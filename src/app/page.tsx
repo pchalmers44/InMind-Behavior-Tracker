@@ -9,6 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { DeleteReportDialog, ReportToastMessage, TrashButton, type ReportToast } from "@/components/reports/DeleteReportControls";
+import { OBSERVATION_ACTIVE_EVENT } from "@/components/updates/AppUpdateNotification";
 import { GRADE_OPTIONS } from "@/lib/grades";
 import {
   buildIntensityTrendLabel,
@@ -3570,6 +3571,25 @@ function PageInner() {
     urlFirstVisitParam === "true" ? true : urlFirstVisitParam === "false" ? false : undefined;
   const newVisitStep = (searchParams.get("step") === "details" ? "details" : "firstVisit") as "firstVisit" | "details";
   const selectedFirstVisit = isFirstVisitFromUrl ?? newVisitForm.isFirstVisit;
+  const isObservationActive = screen === "active" && Boolean(activeVisit);
+
+  useEffect(() => {
+    document.documentElement.dataset.inmindObservationActive = String(isObservationActive);
+    window.dispatchEvent(
+      new CustomEvent(OBSERVATION_ACTIVE_EVENT, {
+        detail: { active: isObservationActive },
+      })
+    );
+
+    return () => {
+      document.documentElement.dataset.inmindObservationActive = "false";
+      window.dispatchEvent(
+        new CustomEvent(OBSERVATION_ACTIVE_EVENT, {
+          detail: { active: false },
+        })
+      );
+    };
+  }, [isObservationActive]);
 
   const handleFirstVisitChange = (val: boolean) => {
     setNewVisitForm((prev) => ({
