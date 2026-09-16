@@ -4014,7 +4014,7 @@ function PageInner() {
         padding: "14px 20px", display: "flex", justifyContent: "space-between",
         alignItems: "center", position: "sticky", top: 0, zIndex: 50
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <Link href="/" className="flex items-center gap-2" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Image
               src="/logo.png"
@@ -4030,6 +4030,37 @@ function PageInner() {
               <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1 }}>Behavior Tracking</div>
             </div>
           </Link>
+          {screen !== "active" && (
+            <button
+              type="button"
+              onClick={() => {
+                setScreen("home");
+                setTab("home");
+                router.push("/?step=firstVisit");
+              }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.borderColor = "#475569";
+                event.currentTarget.style.background = "#111827";
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.borderColor = "#334155";
+                event.currentTarget.style.background = "#0f172a";
+              }}
+              style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: 8,
+                color: "#38bdf8",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 800,
+                minHeight: 32,
+                padding: "6px 12px",
+              }}
+            >
+              Home
+            </button>
+          )}
         </div>
         {screen === "active" && (
           <div style={{ fontSize: 12, color: "#f97316", fontWeight: 700, background: "#f9731622",
