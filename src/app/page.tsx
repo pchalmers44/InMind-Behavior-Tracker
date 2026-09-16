@@ -30,6 +30,7 @@ type Behavior = {
   intensityRecords?: BehaviorOccurrence[];
   durationSec?: number;
   custom?: boolean;
+  note?: string;
   [key: string]: any;
 };
 
@@ -417,6 +418,8 @@ function BehaviorSetupSection({
   elapsed,
   totalStudents,
 }: BehaviorSetupSectionProps) {
+  const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
+
   const updateFrequencyCount = (behaviorId: string, nextCount: number) => {
     const count = Math.max(0, Math.floor(Number.isFinite(nextCount) ? nextCount : 0));
     setBehaviors((prev) =>
@@ -469,6 +472,12 @@ function BehaviorSetupSection({
           intensity: occurrences.length ? occurrences[occurrences.length - 1].intensity ?? null : null,
         };
       })
+    );
+  };
+
+  const updateBehaviorNote = (behaviorId: string, note: string) => {
+    setBehaviors((prev) =>
+      prev.map((behavior) => (behavior.id === behaviorId ? { ...behavior, note } : behavior))
     );
   };
 
@@ -868,6 +877,46 @@ function BehaviorSetupSection({
                 )}
               </div>
             )}
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                onClick={() => setExpandedNotes((prev) => ({ ...prev, [b.id]: !prev[b.id] }))}
+                style={{
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: 8,
+                  color: "#38bdf8",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  padding: "6px 10px",
+                }}
+              >
+                📝 {(b.note ?? "").length > 0 ? "Edit Note" : "Add Note"}
+              </button>
+              {expandedNotes[b.id] && (
+                <textarea
+                  value={b.note ?? ""}
+                  onChange={(event) => updateBehaviorNote(b.id, event.target.value)}
+                  placeholder="Optional behavior notes..."
+                  rows={3}
+                  style={{
+                    width: "100%",
+                    marginTop: 8,
+                    background: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: 10,
+                    color: "#e2e8f0",
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    lineHeight: 1.45,
+                    resize: "vertical",
+                    boxSizing: "border-box",
+                    fontFamily: "inherit",
+                  }}
+                />
+              )}
+            </div>
           </div>
         );
       })}
