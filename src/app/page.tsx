@@ -1,7 +1,7 @@
 ﻿"use client";
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect, @next/next/no-page-custom-font */
-import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
+import { Suspense, useState, useEffect, useRef, useCallback, useMemo, type Dispatch, type KeyboardEvent, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -33,6 +33,7 @@ type Behavior = {
   note?: string;
   studentCount?: number;
   supportsStudentCount?: boolean;
+  supportsDuration?: boolean;
   [key: string]: any;
 };
 
@@ -210,11 +211,11 @@ const BEHAVIOR_LIBRARY = {
     // Desirable behaviors
     { id: "cls-positive-peer", label: "Positive Peer Interactions", type: "frequency", category: "positive" },
     { id: "cls-on-task", label: "On-Task", type: "frequency", category: "positive", measureType: "student-count" },
-    { id: "cls-following-directions", label: "Following Directions", type: "frequency", category: "positive", supportsStudentCount: true },
+    { id: "cls-following-directions", label: "Following Directions", type: "frequency", category: "positive", supportsStudentCount: true, supportsDuration: true },
     { id: "cls-coping-strategies", label: "Positive Use of Coping Strategies", type: "frequency", category: "positive" },
     { id: "cls-praise", label: "Praise / Positive Feedback", type: "frequency", category: "positive" },
     { id: "cls-behavior-specific-praise", label: "Behavior-Specific Praise", type: "frequency", category: "positive" },
-    { id: "cls-smooth-transitions", label: "Smooth / Successful Transitions", type: "frequency", category: "positive", supportsStudentCount: true },
+    { id: "cls-smooth-transitions", label: "Smooth / Successful Transitions", type: "frequency", category: "positive", supportsStudentCount: true, supportsDuration: true },
   ]
 };
 
@@ -309,6 +310,93 @@ function dateStr(ts: number | string | Date | null | undefined) {
 }
 function timeStr(ts: number | string | Date | null | undefined) {
   return new Date(ts as any).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function clampWholeNumber(value: string, min: number, max?: number) {
+  const digits = value.replace(/\D/g, "");
+  const parsed = Number(digits || "0");
+  const whole = Number.isFinite(parsed) ? Math.floor(parsed) : min;
+  return Math.min(max ?? whole, Math.max(min, whole));
+}
+
+function getDurationParts(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds || 0));
+  return {
+    hours: Math.floor(seconds / 3600),
+    minutes: Math.floor((seconds % 3600) / 60),
+    seconds: seconds % 60,
+  };
+}
+
+function ObservationDurationEditor({
+  totalSeconds,
+  onChange,
+}: {
+  totalSeconds: number;
+  onChange: (seconds: number) => void;
+}) {
+  const parts = getDurationParts(totalSeconds);
+
+  const updatePart = (part: "hours" | "minutes" | "seconds", rawValue: string) => {
+    const next = { ...parts };
+    next[part] = clampWholeNumber(rawValue, 0, part === "hours" ? undefined : 59);
+    onChange(next.hours * 3600 + next.minutes * 60 + next.seconds);
+  };
+
+  const preventInvalidNumberKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (["-", "+", ".", ",", "e", "E"].includes(event.key)) {
+      event.preventDefault();
+    }
+  };
+
+  const inputStyle = {
+    width: "100%",
+    background: "#0f172a",
+    border: "1px solid #334155",
+    borderRadius: 10,
+    color: "#e2e8f0",
+    padding: "10px 12px",
+    fontSize: 14,
+    boxSizing: "border-box" as const,
+    fontFamily: "inherit",
+    fontWeight: 800,
+    fontVariantNumeric: "tabular-nums" as const,
+  };
+
+  return (
+    <div style={{
+      background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16,
+      border: "1px solid #38bdf855"
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#38bdf8", marginBottom: 10, letterSpacing: "0.06em" }}>
+        OBSERVATION DURATION
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+        {([
+          ["hours", "Hours", parts.hours, undefined],
+          ["minutes", "Minutes", parts.minutes, 59],
+          ["seconds", "Seconds", parts.seconds, 59],
+        ] as const).map(([part, label, value, max]) => (
+          <label key={part} style={{ display: "block" }}>
+            <span style={{ display: "block", fontSize: 10, color: "#94a3b8", fontWeight: 800, marginBottom: 5 }}>
+              {label}
+            </span>
+            <input
+              type="number"
+              min="0"
+              max={max}
+              step="1"
+              inputMode="numeric"
+              value={value}
+              onKeyDown={preventInvalidNumberKey}
+              onChange={(event) => updatePart(part, event.target.value)}
+              style={inputStyle}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // --- Components ---
@@ -784,6 +872,72 @@ function BehaviorSetupSection({
                         </div>
                         <div style={{ fontSize: 10, color: "#64748b" }}>of {totalStudents} students</div>
                       </div>
+                    </div>
+                  )}
+                  {b.supportsDuration && (
+                    <div style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: "1px solid #334155",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 16,
+                      flexWrap: "wrap"
+                    }}>
+                      <button
+                        onClick={() => onToggleDuration(b.id)}
+                        disabled={intensityBlocked}
+                        style={{
+                          background: intensityBlocked
+                            ? "#0f172a"
+                            : isRunning
+                              ? "linear-gradient(135deg, #f97316, #fb923c)"
+                              : "linear-gradient(135deg, #34d399, #6ee7b7)",
+                          color: intensityBlocked ? "#475569" : isRunning ? "white" : "#0f172a",
+                          border: "none",
+                          borderRadius: 12,
+                          padding: "10px 20px",
+                          fontSize: 13,
+                          fontWeight: 800,
+                          cursor: intensityBlocked ? "not-allowed" : "pointer",
+                          minWidth: 100,
+                        }}
+                      >
+                        {isRunning ? "Stop" : "Start"}
+                      </button>
+                      <div style={{ textAlign: "center" }}>
+                        <div
+                          style={{
+                            fontSize: 28,
+                            fontWeight: 900,
+                            color: isRunning ? "#34d399" : "#6ee7b7",
+                            lineHeight: 1,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {fmtDuration(durSec)}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#64748b" }}>recorded</div>
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        value={durSec}
+                        onChange={(e) => updateDurationSeconds(b.id, parseInt(e.target.value || "0", 10))}
+                        disabled={intensityBlocked}
+                        aria-label={`${b.label} duration seconds`}
+                        style={{
+                          width: 104,
+                          background: "#0f172a",
+                          border: "1px solid #334155",
+                          borderRadius: 10,
+                          color: intensityBlocked ? "#475569" : "#e2e8f0",
+                          padding: "9px 10px",
+                          fontSize: 13,
+                          fontFamily: "inherit",
+                          boxSizing: "border-box",
+                        }}
+                      />
                     </div>
                   )}
                   </>
@@ -1451,7 +1605,7 @@ function ActiveVisit({
   const [elapsed, setElapsed] = useState(() => Math.max(0, Math.floor(visit.totalDuration || 0)));
   const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
   const [durationTimers, setDurationTimers] = useState<Record<string, number>>(() =>
-    Object.fromEntries((visit.behaviors || []).filter((b) => b.type === "duration").map((b) => [b.id, b.durationSec || 0]))
+    Object.fromEntries((visit.behaviors || []).filter((b) => b.type === "duration" || b.supportsDuration).map((b) => [b.id, b.durationSec || 0]))
   );
   const [notes, setNotes] = useState(visit.notes || "");
   const [recommendations, setRecommendations] = useState(visit.recommendations || "");
@@ -1604,9 +1758,11 @@ function ActiveVisit({
 
   const handleComplete = () => {
     const now = Date.now();
+    const completedDuration = Math.max(0, Math.floor(elapsed || 0));
+    const completedEndTime = isEditing ? startRef.current + completedDuration * 1000 : now;
     const finalBehaviors = behaviors.map(b => ({
       ...b,
-      durationSec: b.type === "duration"
+      durationSec: b.type === "duration" || b.supportsDuration
         ? activeTimers.current[b.id] && typeof durationLastTicks.current[b.id] === "number"
           ? (durationTimers[b.id] || 0) + Math.max(0, Math.floor((now - durationLastTicks.current[b.id]) / 1000))
           : (durationTimers[b.id] || 0)
@@ -1620,9 +1776,9 @@ function ActiveVisit({
       recommendations,
       implementationStatus: implStatus,
       implementationNotes: implNotes,
-      endTime: isEditing ? visit.endTime ?? Date.now() : Date.now(),
+      endTime: completedEndTime,
       updatedAt: isEditing ? new Date().toISOString() : visit.updatedAt,
-      totalDuration: elapsed
+      totalDuration: completedDuration
     });
   };
 
@@ -1659,6 +1815,13 @@ function ActiveVisit({
           </div>
         </div>
       </div>
+
+      {isEditing && (
+        <ObservationDurationEditor
+          totalSeconds={elapsed}
+          onChange={setElapsed}
+        />
+      )}
 
       {visit.type === "classroom" && (
         <div style={{
@@ -1800,7 +1963,7 @@ function ActiveFbaVisit({
 
   const [behaviors, setBehaviors] = useState<Behavior[]>(() => normalizeBehaviorList(visit.behaviors));
   const [durationTimers, setDurationTimers] = useState<Record<string, number>>(() =>
-    Object.fromEntries((visit.behaviors || []).filter((b) => b.type === "duration").map((b) => [b.id, b.durationSec || 0]))
+    Object.fromEntries((visit.behaviors || []).filter((b) => b.type === "duration" || b.supportsDuration).map((b) => [b.id, b.durationSec || 0]))
   );
   const activeTimers = useRef<Record<string, boolean>>({});
   const durationStarts = useRef<Record<string, number>>({});
@@ -2084,9 +2247,11 @@ function ActiveFbaVisit({
 
   const handleComplete = () => {
     const now = Date.now();
+    const completedDuration = Math.max(0, Math.floor(elapsed || 0));
+    const completedEndTime = isEditing ? startRef.current + completedDuration * 1000 : now;
     const finalBehaviors = behaviors.map((b) => ({
       ...b,
-      durationSec: b.type === "duration"
+      durationSec: b.type === "duration" || b.supportsDuration
         ? activeTimers.current[b.id] && typeof durationLastTicks.current[b.id] === "number"
           ? (durationTimers[b.id] || 0) + Math.max(0, Math.floor((now - durationLastTicks.current[b.id]) / 1000))
           : (durationTimers[b.id] || 0)
@@ -2123,9 +2288,9 @@ function ActiveFbaVisit({
       fbaIntervalSessions: intervalSessionsNext,
       notes,
       recommendations,
-      endTime: isEditing ? visit.endTime ?? Date.now() : Date.now(),
+      endTime: completedEndTime,
       updatedAt: isEditing ? new Date().toISOString() : visit.updatedAt,
-      totalDuration: elapsed,
+      totalDuration: completedDuration,
     });
   };
 
@@ -2157,6 +2322,13 @@ function ActiveFbaVisit({
           </div>
         </div>
       </div>
+
+      {isEditing && (
+        <ObservationDurationEditor
+          totalSeconds={elapsed}
+          onChange={setElapsed}
+        />
+      )}
 
       {/* Student Info */}
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16, border: "1px solid #334155" }}>
