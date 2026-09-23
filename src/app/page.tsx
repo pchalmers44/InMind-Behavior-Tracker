@@ -3137,6 +3137,10 @@ function getSchoolOptionsForDistrict(visits: Visit[], district: string) {
   );
 }
 
+function getObserverOptionsFromVisits(visits: Visit[]) {
+  return uniqueReportOptions(visits.map((visit) => visit.observerName));
+}
+
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -3226,12 +3230,14 @@ function filterOrganizationalReportVisits(
   scope: ReportScope,
   district: string,
   school: string,
+  observer: string,
   dateRange: ReportDateRange
 ) {
   if (!district.trim()) return [];
   return visits.filter((visit) => {
     if (visit.district !== district) return false;
     if (scope === "school" && school && visit.schoolName !== school) return false;
+    if (observer !== "all" && visit.observerName !== observer) return false;
     return isVisitInReportDateRange(visit, dateRange);
   });
 }
@@ -3309,6 +3315,7 @@ function Reports({
   const [reportScope, setReportScope] = useState<ReportScope>("district");
   const [schoolFilter, setSchoolFilter] = useState("");
   const [districtFilter, setDistrictFilter] = useState("");
+  const [observerFilter, setObserverFilter] = useState("all");
   const [datePreset, setDatePreset] = useState<ReportDatePreset>("last30");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
@@ -3322,6 +3329,7 @@ function Reports({
   const reportableVisits = useMemo(() => visits.filter((v) => v.type !== "fba"), [visits]);
 
   const districtOptions = useMemo(() => getDistrictOptionsFromVisits(reportableVisits), [reportableVisits]);
+  const observerOptions = useMemo(() => getObserverOptionsFromVisits(reportableVisits), [reportableVisits]);
   const scopedSchoolOptions = useMemo(
     () => getSchoolOptionsForDistrict(reportableVisits, districtFilter),
     [districtFilter, reportableVisits]
@@ -3336,8 +3344,8 @@ function Reports({
     [datePreset, reportDateRange]
   );
   const selectedReportVisits = useMemo(
-    () => filterOrganizationalReportVisits(reportableVisits, reportScope, districtFilter, schoolFilter, reportDateRange),
-    [districtFilter, reportDateRange, reportScope, reportableVisits, schoolFilter]
+    () => filterOrganizationalReportVisits(reportableVisits, reportScope, districtFilter, schoolFilter, observerFilter, reportDateRange),
+    [districtFilter, observerFilter, reportDateRange, reportScope, reportableVisits, schoolFilter]
   );
   const reportMetadata = useMemo<ReportMetadata>(() => ({
     reportScope: reportScope === "school" ? "School" : "District",
@@ -3479,7 +3487,8 @@ function Reports({
   const subjects = [...new Set(reportableVisits.map(v => v.subjectName))].sort();
   const filtered = reportableVisits.filter(v =>
     (filter === "all" || v.type === filter) &&
-    (selectedSubject === "all" || v.subjectName === selectedSubject)
+    (selectedSubject === "all" || v.subjectName === selectedSubject) &&
+    (observerFilter === "all" || v.observerName === observerFilter)
   ).sort((a, b) => b.startTime - a.startTime);
 
   const confirmDeleteReport = async () => {
@@ -3591,6 +3600,21 @@ function Reports({
             )}
           </div>
           )}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>OBSERVER</div>
+            <select
+              value={observerFilter}
+              onChange={e => setObserverFilter(e.target.value)}
+              style={{
+                width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "10px 12px", fontSize: 13, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            >
+              <option value="all">All Observers</option>
+              {observerOptions.map(observer => <option key={observer} value={observer}>{observer}</option>)}
+            </select>
+          </div>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DATE RANGE</div>
             <select
@@ -3738,6 +3762,13 @@ function Reports({
         }}>
           <option value="all">All Subjects</option>
           {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={observerFilter} onChange={e => setObserverFilter(e.target.value)} style={{
+          background: "#1e293b", border: "1px solid #334155", borderRadius: 8,
+          color: "#e2e8f0", padding: "6px 12px", fontSize: 12, fontFamily: "inherit"
+        }}>
+          <option value="all">All Observers</option>
+          {observerOptions.map(observer => <option key={observer} value={observer}>{observer}</option>)}
         </select>
       </div>
 

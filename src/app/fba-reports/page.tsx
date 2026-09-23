@@ -166,6 +166,7 @@ export default function FbaReportsPage() {
   const canManageAllObservations = isObservationAdmin(user);
   const [student, setStudent] = useState("");
   const [behavior, setBehavior] = useState("");
+  const [observer, setObserver] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
@@ -288,20 +289,29 @@ export default function FbaReportsPage() {
     }
   };
 
+  const observerOptions = useMemo(
+    () => uniqueSorted(sessions.map((session) => session.observer_name || "")),
+    [sessions]
+  );
+  const filteredSessions = useMemo(
+    () => sessions.filter((session) => observer === "all" || session.observer_name === observer),
+    [observer, sessions]
+  );
+
   const behaviorOptions = useMemo(() => {
     const opts: string[] = [];
-    for (const s of sessions) {
+    for (const s of filteredSessions) {
       for (const b of s.behaviors || []) opts.push(b.label);
       for (const e of s.fba_latency_events || []) opts.push(e.behaviorLabel);
       for (const sess of s.fba_interval_sessions || []) opts.push(sess.behaviorLabel);
     }
     return uniqueSorted(opts);
-  }, [sessions]);
+  }, [filteredSessions]);
 
   const computed = useMemo(() => {
     const behaviorFilter = behavior.trim();
     const hasBehaviorFilter = Boolean(behaviorFilter);
-    const sessionsSorted = [...sessions].sort((a, b) => (toMs(a.start_time) || 0) - (toMs(b.start_time) || 0));
+    const sessionsSorted = [...filteredSessions].sort((a, b) => (toMs(a.start_time) || 0) - (toMs(b.start_time) || 0));
 
     const perSession = sessionsSorted.map((s) => {
       const startMs = toMs(s.start_time);
@@ -372,7 +382,7 @@ export default function FbaReportsPage() {
         labels: perSession.map((p) => p.startLabel || ""),
       },
     };
-  }, [sessions, behavior]);
+  }, [filteredSessions, behavior]);
 
   const confirmDeleteReport = async () => {
     if (!deleteTarget) return;
@@ -444,7 +454,7 @@ export default function FbaReportsPage() {
             </datalist>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div className="grid gap-2">
               <label className="text-xs font-bold tracking-widest text-slate-400">START DATE</label>
               <input
@@ -474,6 +484,21 @@ export default function FbaReportsPage() {
                 {behaviorOptions.map((b) => (
                   <option key={b} value={b}>
                     {b}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <label className="text-xs font-bold tracking-widest text-slate-400">OBSERVER</label>
+              <select
+                value={observer}
+                onChange={(e) => setObserver(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              >
+                <option value="all">All Observers</option>
+                {observerOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
                   </option>
                 ))}
               </select>

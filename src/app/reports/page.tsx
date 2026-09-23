@@ -99,6 +99,10 @@ function getUniqueSchools(rows: VisitRow[]) {
   return uniqueSorted(rows.map((row) => row.school_name || ""));
 }
 
+function getUniqueObservers(rows: VisitRow[]) {
+  return uniqueSorted(rows.map((row) => row.observer_name || ""));
+}
+
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -184,11 +188,12 @@ function isVisitInReportDateRange(row: VisitRow, dateRange: ReportDateRange) {
   return true;
 }
 
-function filterReportVisits(rows: VisitRow[], scope: ReportScope, district: string, school: string, dateRange: ReportDateRange) {
+function filterReportVisits(rows: VisitRow[], scope: ReportScope, district: string, school: string, observer: string, dateRange: ReportDateRange) {
   if (!district.trim()) return [];
   return rows.filter((row) => {
     if (row.district !== district) return false;
     if (scope === "school" && school && row.school_name !== school) return false;
+    if (observer !== "all" && row.observer_name !== observer) return false;
     return isVisitInReportDateRange(row, dateRange);
   });
 }
@@ -308,6 +313,7 @@ export default function ReportsPage() {
   const [reportScope, setReportScope] = useState<ReportScope>("district");
   const [school, setSchool] = useState("");
   const [district, setDistrict] = useState("");
+  const [observer, setObserver] = useState("all");
   const [datePreset, setDatePreset] = useState<ReportDatePreset>("last30");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
@@ -394,9 +400,10 @@ export default function ReportsPage() {
     () => getReportDateRangeLabel(datePreset, reportDateRange),
     [datePreset, reportDateRange]
   );
+  const observerOptions = useMemo(() => getUniqueObservers(visits), [visits]);
   const selectedReportVisits = useMemo(
-    () => filterReportVisits(visits, reportScope, district, school, reportDateRange),
-    [district, reportDateRange, reportScope, school, visits]
+    () => filterReportVisits(visits, reportScope, district, school, observer, reportDateRange),
+    [district, observer, reportDateRange, reportScope, school, visits]
   );
   const reportMetadata = useMemo<ReportMetadata>(() => ({
     reportScope: reportScope === "school" ? "School" : "District",
@@ -661,6 +668,22 @@ export default function ReportsPage() {
             )}
           </div>
           )}
+
+          <div className="grid gap-2">
+            <label className="text-xs font-bold tracking-widest text-slate-400">OBSERVER</label>
+            <select
+              value={observer}
+              onChange={(e) => setObserver(e.target.value)}
+              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400"
+            >
+              <option value="all">All Observers</option>
+              {observerOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="grid gap-2">
             <label className="text-xs font-bold tracking-widest text-slate-400">DATE RANGE</label>
