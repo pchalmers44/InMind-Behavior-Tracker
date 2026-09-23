@@ -396,7 +396,7 @@ export default function FbaReportsPage() {
       }
       if (!deletedRows?.length) throw new Error("Report was not deleted.");
 
-      setSessions((prev) => prev.filter((session) => session.id !== deleteTarget.id));
+      await runReport();
       setDeleteTarget(null);
       setToast({ type: "success", message: "Report deleted successfully." });
     } catch (deleteError) {

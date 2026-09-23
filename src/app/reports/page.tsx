@@ -545,6 +545,10 @@ export default function ReportsPage() {
       setToast({ type: "error", message: "You do not have permission to delete reports." });
       return;
     }
+    if (!user?.id) {
+      setToast({ type: "error", message: "Sign in again before deleting reports." });
+      return;
+    }
 
     setIsDeleting(true);
     setError(null);
@@ -561,7 +565,9 @@ export default function ReportsPage() {
       }
       if (!deletedRows?.length) throw new Error("Report was not deleted.");
 
-      setVisits((prev) => prev.filter((visit) => visit.id !== deleteTarget.id));
+      const districtVisits = await loadVisitsForDistrict(district, user.id, canManageAllObservations);
+      setVisits(districtVisits);
+      setSchools(getUniqueSchools(districtVisits));
       setDeleteTarget(null);
       setToast({ type: "success", message: "Report deleted successfully." });
     } catch (deleteError) {

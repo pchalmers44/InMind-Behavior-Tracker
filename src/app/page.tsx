@@ -3939,7 +3939,7 @@ function PageInner() {
     router.push(`/?step=details&firstVisit=${val}`);
   };
 
-  useEffect(() => {
+  const fetchPersistedVisits = useCallback(async () => {
     const logSupabaseError = (label: string, error: any) => {
       if (!error) return;
       console.error(label, {
@@ -3951,73 +3951,73 @@ function PageInner() {
       });
     };
 
-    const fetchPersistedVisits = async () => {
-      if (!user?.id) {
+    if (!user?.id) {
+      setData({ visits: [], subjects: [] });
+      return;
+    }
+
+    console.info("[visits] Fetch start: visits table");
+    try {
+      let query = supabase
+        .from("visits")
+        .select("*")
+        .order("start_time", { ascending: false });
+
+      if (!canManageAllObservations) query = query.eq("created_by", user.id);
+
+      const { data: visits, error } = await query;
+
+      if (error) {
+        logSupabaseError("[visits] Fetch error", error);
         setData({ visits: [], subjects: [] });
         return;
       }
 
-      console.info("[visits] Fetch start: visits table");
-      try {
-        let query = supabase
-          .from("visits")
-          .select("*")
-          .order("start_time", { ascending: false });
+      const mappedVisits: Visit[] = (visits || []).map((v: any) => {
+        const start = v.start_time ?? v.startTime;
+        const end = v.end_time ?? v.endTime;
 
-        if (!canManageAllObservations) query = query.eq("created_by", user.id);
+        return {
+          ...v,
+          type: (v.observation_type ?? v.type ?? "student") as Visit["type"],
+          subjectName: v.subject_name ?? v.subjectName,
+          observerName: v.observer_name ?? v.observerName,
+          isFirstVisit: v.is_first_visit ?? v.isFirstVisit,
+          implementationStatus: v.implementation_status ?? v.implementationStatus,
+          district: v.district ?? v.districtName,
+          schoolName: v.school_name ?? v.schoolName,
+          totalStudents: v.total_students ?? v.totalStudents,
+          abcEntries: v.abc_entries ?? v.abcEntries,
+          latencyRecords: v.latency_records ?? v.latencyRecords,
+          fbaLatencyEvents: v.fba_latency_events ?? v.fbaLatencyEvents,
+          intervalRecords: v.interval_records ?? v.intervalRecords,
+          intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
+          fbaIntervalSessions: v.fba_interval_sessions ?? v.fbaIntervalSessions,
+          notes: v.notes,
+          recommendations: v.recommendations,
+          implementationNotes: v.implementation_notes ?? v.implementationNotes,
+          updatedAt: v.updated_at ?? v.updatedAt,
+          behaviors: normalizeBehaviorList(v.behaviors ?? v.behaviors),
+          startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
+          endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
+          totalDuration: v.total_duration ?? v.totalDuration,
+        };
+      });
 
-        const { data: visits, error } = await query;
+      console.info("[visits] Fetch success", {
+        count: mappedVisits.length,
+        newestStartTime: mappedVisits[0]?.startTime ?? null,
+      });
+      setData({ visits: mappedVisits, subjects: [] });
+    } catch (e) {
+      console.error("[visits] Fetch failed (exception)", e);
+      setData({ visits: [], subjects: [] });
+    }
+  }, [canManageAllObservations, user]);
 
-        if (error) {
-          logSupabaseError("[visits] Fetch error", error);
-          setData({ visits: [], subjects: [] });
-          return;
-        }
-
-        const mappedVisits: Visit[] = (visits || []).map((v: any) => {
-          const start = v.start_time ?? v.startTime;
-          const end = v.end_time ?? v.endTime;
-
-          return {
-            ...v,
-            type: (v.observation_type ?? v.type ?? "student") as Visit["type"],
-            subjectName: v.subject_name ?? v.subjectName,
-            observerName: v.observer_name ?? v.observerName,
-            isFirstVisit: v.is_first_visit ?? v.isFirstVisit,
-            implementationStatus: v.implementation_status ?? v.implementationStatus,
-            district: v.district ?? v.districtName,
-            schoolName: v.school_name ?? v.schoolName,
-            totalStudents: v.total_students ?? v.totalStudents,
-            abcEntries: v.abc_entries ?? v.abcEntries,
-            latencyRecords: v.latency_records ?? v.latencyRecords,
-            fbaLatencyEvents: v.fba_latency_events ?? v.fbaLatencyEvents,
-            intervalRecords: v.interval_records ?? v.intervalRecords,
-            intervalLengthSec: v.interval_length_sec ?? v.intervalLengthSec,
-            fbaIntervalSessions: v.fba_interval_sessions ?? v.fbaIntervalSessions,
-            notes: v.notes,
-            recommendations: v.recommendations,
-            implementationNotes: v.implementation_notes ?? v.implementationNotes,
-            updatedAt: v.updated_at ?? v.updatedAt,
-            behaviors: normalizeBehaviorList(v.behaviors ?? v.behaviors),
-            startTime: (typeof start === "number" ? start : start ? new Date(start).getTime() : null) as any,
-            endTime: (typeof end === "number" ? end : end ? new Date(end).getTime() : null) as any,
-            totalDuration: v.total_duration ?? v.totalDuration,
-          };
-        });
-
-        console.info("[visits] Fetch success", {
-          count: mappedVisits.length,
-          newestStartTime: mappedVisits[0]?.startTime ?? null,
-        });
-        setData({ visits: mappedVisits, subjects: [] });
-      } catch (e) {
-        console.error("[visits] Fetch failed (exception)", e);
-        setData({ visits: [], subjects: [] });
-      }
-    };
-
-    fetchPersistedVisits();
-  }, [canManageAllObservations, user?.id]);
+  useEffect(() => {
+    void fetchPersistedVisits();
+  }, [fetchPersistedVisits]);
 
   const persistData = useCallback((d: DataState) => {
     setData(d);
@@ -4259,14 +4259,7 @@ function PageInner() {
     }
     if (!deletedRows?.length) throw new Error("Report was not deleted.");
 
-    setData((prev) =>
-      prev
-        ? {
-            ...prev,
-            visits: prev.visits.filter((visit) => visit.id !== visitId),
-          }
-        : prev
-    );
+    await fetchPersistedVisits();
     setSelectedVisit((prev) => (prev?.id === visitId ? null : prev));
   };
 
