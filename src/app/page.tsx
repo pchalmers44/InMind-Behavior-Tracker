@@ -173,6 +173,11 @@ type NewVisitFormState = {
   schoolName: string;
   isFirstVisit?: boolean;
 };
+type ObservationSelectionCard = "student" | "classroom" | "fba" | "rhs9";
+const RHS_9TH_GRADE_VALUE = "Grade 9";
+const RHS_DISTRICT_SELECTION = "Other";
+const RHS_DISTRICT_NAME = "Randolph Public Schools";
+const RHS_SCHOOL_NAME = "Randolph High School";
 
 // --- Behavior Library ---
 const BEHAVIOR_LIBRARY = {
@@ -3931,6 +3936,7 @@ function PageInner() {
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
   const [tab, setTab] = useState<"" | "home" | "history" | "reports">("home");
   const [implementationStatus, setImplementationStatus] = useState("");
+  const [observationSelectionCard, setObservationSelectionCard] = useState<ObservationSelectionCard>("student");
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState<ReportToast>(null);
   const router = useRouter();
@@ -4269,6 +4275,7 @@ function PageInner() {
       schoolName: "",
       isFirstVisit: undefined,
     });
+    setObservationSelectionCard("student");
     setImplementationStatus("");
     router.push("/?step=firstVisit");
   };
@@ -4441,41 +4448,56 @@ function PageInner() {
                 />
 
                 <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-              {(["student", "classroom", "fba"] as const).map(t => (
+              {([
+                { id: "student", label: "Student", type: "student" },
+                { id: "classroom", label: "Classroom", type: "classroom" },
+                { id: "fba", label: "FBA", type: "fba" },
+                { id: "rhs9", label: "9th Grade RHS", type: "classroom" },
+              ] as const).map(option => {
+                const isSelected = observationSelectionCard === option.id;
+                return (
                 <button
-                  key={t}
+                  key={option.id}
                   onClick={() => {
                     setImplementationStatus("");
+                    const isRhs9 = option.id === "rhs9";
+                    const wasRhs9 = observationSelectionCard === "rhs9";
+                    setObservationSelectionCard(option.id);
                       setNewVisitForm(p => ({
                       ...p,
-                      type: t,
+                      type: option.type,
+                      grade: isRhs9 ? RHS_9TH_GRADE_VALUE : wasRhs9 ? "" : p.grade,
+                      selectedDistrict: isRhs9 ? RHS_DISTRICT_SELECTION : wasRhs9 ? "" : p.selectedDistrict,
+                      customDistrict: isRhs9 ? RHS_DISTRICT_NAME : wasRhs9 ? "" : p.customDistrict,
+                      schoolName: isRhs9 ? RHS_SCHOOL_NAME : wasRhs9 ? "" : p.schoolName,
                       ...(selectedFirstVisit === false ? { subjectName: "" } : {})
                     }));
                   }}
                   style={{
                   flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700,
-                  border: `2px solid ${newVisitForm.type === t ? "#38bdf8" : "#334155"}`,
-                  background: newVisitForm.type === t ? "#38bdf822" : "#1e293b",
-                  color: newVisitForm.type === t ? "#38bdf8" : "#64748b", cursor: "pointer",
-                  textTransform: "capitalize"
+                  border: `2px solid ${isSelected ? "#38bdf8" : "#334155"}`,
+                  background: isSelected ? "#38bdf822" : "#1e293b",
+                  color: isSelected ? "#38bdf8" : "#64748b", cursor: "pointer",
+                  textTransform: option.id === "rhs9" ? "none" : "capitalize"
                 }}
                 >
-                  {t === "student" ? "Student" : t === "classroom" ? "Classroom" : "FBA"}
+                  {option.label}
                 </button>
-              ))}
+                );
+              })}
                 </div>
 
             {([
               {
                 key: "subjectName" as const,
-                label: newVisitForm.type === "classroom" ? "Classroom / Teacher" : "Student Name",
-                placeholder: newVisitForm.type === "classroom" ? "e.g. Ms. Johnson - Room 12" : "e.g. Alex M.",
+                label: observationSelectionCard === "rhs9" ? "Teacher / Room" : newVisitForm.type === "classroom" ? "Classroom / Teacher" : "Student Name",
+                placeholder: observationSelectionCard === "rhs9" ? "e.g. Leighton - R344" : newVisitForm.type === "classroom" ? "e.g. Ms. Johnson - Room 12" : "e.g. Alex M.",
               },
               { key: "observerName" as const, label: "Observer Name", placeholder: "Your name" },
             ] as const).map(f => (
               <div key={f.key} style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>{f.label.toUpperCase()}</div>
-                {f.key === "subjectName" && selectedFirstVisit === false && subjectNameOptions.length > 0 ? (
+                {f.key === "subjectName" && selectedFirstVisit === false && observationSelectionCard !== "rhs9" && subjectNameOptions.length > 0 ? (
                   <SearchableSelect
                     options={subjectNameOptions}
                     value={newVisitForm.subjectName}
@@ -4502,18 +4524,19 @@ function PageInner() {
               </div>
             ))}
 
+            {observationSelectionCard !== "rhs9" && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>GRADE</div>
-              <select
-                required
-                value={newVisitForm.grade}
-                onChange={e => setNewVisitForm(p => ({ ...p, grade: e.target.value }))}
-                style={{
-                  width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
-                  color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
-                  fontFamily: "inherit"
-                }}
-              >
+            <select
+              required
+              value={newVisitForm.grade}
+              onChange={e => setNewVisitForm(p => ({ ...p, grade: e.target.value }))}
+              style={{
+                width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 10,
+                color: "#e2e8f0", padding: "12px 14px", fontSize: 14, boxSizing: "border-box",
+                fontFamily: "inherit"
+              }}
+            >
                 <option value="" disabled>
                   Select Grade
                 </option>
@@ -4522,7 +4545,9 @@ function PageInner() {
                 ))}
               </select>
             </div>
+            )}
 
+            {observationSelectionCard !== "rhs9" && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DISTRICT</div>
               <select
@@ -4549,8 +4574,9 @@ function PageInner() {
                 ))}
               </select>
             </div>
+            )}
 
-            {newVisitForm.selectedDistrict === "Other" && (
+            {observationSelectionCard !== "rhs9" && newVisitForm.selectedDistrict === "Other" && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>DISTRICT NAME</div>
                 <input
@@ -4567,6 +4593,7 @@ function PageInner() {
               </div>
             )}
 
+            {observationSelectionCard !== "rhs9" && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
                 SCHOOL NAME
@@ -4601,6 +4628,7 @@ function PageInner() {
                 />
               )}
             </div>
+            )}
 
             {newVisitForm.type === "classroom" && (
               <div style={{ marginBottom: 14 }}>
@@ -4724,6 +4752,7 @@ function PageInner() {
                     schoolName: "",
                     isFirstVisit: undefined,
                   });
+                  setObservationSelectionCard("student");
                   router.push("/?step=firstVisit");
                   setScreen("new-visit");
                   setTab("");
