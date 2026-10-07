@@ -207,7 +207,7 @@ const BEHAVIOR_LIBRARY = {
     // Undesirable behaviors
     { id: "cls-negative-peer", label: "Negative Peer Interactions", type: "frequency", category: "challenging" },
     { id: "cls-off-task", label: "Off-Task", type: "frequency", category: "challenging", measureType: "student-count" },
-    { id: "cls-noncompliance", label: "Noncompliance", type: "frequency", category: "challenging", supportsStudentCount: true },
+    { id: "cls-noncompliance", label: "Noncompliance", type: "frequency", category: "challenging", supportsStudentCount: true, supportsDuration: true },
     { id: "cls-disruption", label: "Disruption", type: "frequency", category: "challenging" },
     { id: "cls-eloping-seat", label: "Eloping from Seat", type: "frequency", category: "challenging" },
     { id: "cls-eloping-classroom", label: "Eloping from Classroom", type: "frequency", category: "challenging" },
