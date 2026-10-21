@@ -185,6 +185,7 @@ const BEHAVIOR_LIBRARY = {
     // Undesirable / Challenging behaviors
     { id: "disruption", label: "Disruption", type: "frequency", category: "challenging" },
     { id: "work-refusal", label: "Work Refusal", type: "frequency", category: "challenging" },
+    { id: "cls-noncompliance", label: "Noncompliance", type: "frequency", category: "challenging", supportsStudentCount: true, supportsDuration: true },
     { id: "verbal-aggression", label: "Verbal Aggression", type: "frequency", category: "challenging" },
     { id: "physical-aggression", label: "Physical Aggression", type: "frequency", category: "challenging" },
     { id: "elopement", label: "Elopement", type: "frequency", category: "challenging" },
@@ -2063,7 +2064,9 @@ function ActiveFbaVisit({
     setAbcEntries((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const studentLib = [...BEHAVIOR_LIBRARY.student, ...BEHAVIOR_LIBRARY.classroom] as Behavior[];
+  const studentLib = Array.from(
+    new Map([...BEHAVIOR_LIBRARY.student, ...BEHAVIOR_LIBRARY.classroom].map((b) => [b.id, b])).values()
+  ) as Behavior[];
   const availableLib = studentLib.filter((b) => !behaviors.find((bb) => bb.id === b.id));
 
   const addBehaviorFromLibrary = (bDef: Behavior) => {
