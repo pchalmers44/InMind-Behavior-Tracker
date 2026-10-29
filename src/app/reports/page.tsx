@@ -1,5 +1,6 @@
 "use client";
 
+import { logDiagnostic } from "@/lib/reliability";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -347,7 +348,7 @@ export default function ReportsPage() {
         setDistricts(nextDistricts);
       } catch (error) {
         if (cancelled) return;
-        console.error("[reports] Failed to load district options:", error);
+        logDiagnostic("report-request", error);
         setError(error instanceof Error ? error.message : "Failed to load district options.");
       } finally {
         if (!cancelled) setLoadingOptions(false);
@@ -375,7 +376,7 @@ export default function ReportsPage() {
         setSchools(getUniqueSchools(districtVisits));
       } catch (error) {
         if (cancelled) return;
-        console.error("[reports] Failed to load schools for district:", error);
+        logDiagnostic("report-request", error);
         setError(error instanceof Error ? error.message : "Failed to load schools for this district.");
       } finally {
         if (!cancelled) setLoadingSchools(false);
@@ -567,7 +568,7 @@ export default function ReportsPage() {
         .select("id");
 
       if (deleteError) {
-        console.error("DELETE ERROR:", deleteError);
+        logDiagnostic("report-request", deleteError);
         throw new Error(formatDeleteFailedMessage(deleteError));
       }
       if (!deletedRows?.length) throw new Error("Report was not deleted.");

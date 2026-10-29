@@ -1,5 +1,6 @@
 "use client";
 
+import { logDiagnostic } from "@/lib/reliability";
 /* eslint-disable @typescript-eslint/no-explicit-any, react/no-unescaped-entities */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -204,13 +205,7 @@ export default function FbaReportsPage() {
 
       if (cancelled) return;
       if (error) {
-        console.error("[fba-reports] Failed to load student options:", {
-          message: error.message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-          code: (error as any).code,
-          raw: error,
-        });
+        logDiagnostic("report-request", { code: error.code });
         setError(error.message || "Failed to load student options.");
         setLoadingOptions(false);
         return;
@@ -240,7 +235,6 @@ export default function FbaReportsPage() {
 
     setLoading(true);
     setError(null);
-    console.info("[fba-reports] Run report", { student: studentName, startDate, endDate, behavior });
     try {
       let query = supabase
         .from("visits")
@@ -265,13 +259,7 @@ export default function FbaReportsPage() {
 
       const { data, error } = await query;
       if (error) {
-        console.error("[fba-reports] Query error:", {
-          message: error.message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-          code: (error as any).code,
-          raw: error,
-        });
+        logDiagnostic("report-request", { code: error.code });
         setError(error.message || "Failed to load FBA sessions.");
         setSessions([]);
         return;
@@ -281,7 +269,7 @@ export default function FbaReportsPage() {
       setSessions(rows);
       console.info("[fba-reports] Loaded sessions:", rows.length);
     } catch (e) {
-      console.error("[fba-reports] Exception while running report:", e);
+      logDiagnostic("report-request", e);
       setError(e instanceof Error ? e.message : "Failed to run report.");
       setSessions([]);
     } finally {
@@ -401,7 +389,7 @@ export default function FbaReportsPage() {
         .select("id");
 
       if (deleteError) {
-        console.error("DELETE ERROR:", deleteError);
+        logDiagnostic("report-request", deleteError);
         throw new Error(formatDeleteFailedMessage(deleteError));
       }
       if (!deletedRows?.length) throw new Error("Report was not deleted.");

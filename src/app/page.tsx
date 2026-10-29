@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { ambiguousWrite, logDiagnostic, matchesWrite, missingColumn, reconcileVisit, safeSubjectName, withDeadline, writeVisit, type PendingVisitWrite } from "@/lib/reliability";
 import { isObservationAdmin } from "@/lib/permissions";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { DeleteReportDialog, ReportToastMessage, TrashButton, type ReportToast } from "@/components/reports/DeleteReportControls";
@@ -51,42 +52,6 @@ type SupabaseDeleteError = {
 function formatDeleteFailedMessage(error: SupabaseDeleteError) {
   return [
     "Delete failed",
-    "",
-    "Code:",
-    error.code || "none",
-    "",
-    "Message:",
-    error.message || "none",
-    "",
-    "Details:",
-    error.details || "none",
-    "",
-    "Hint:",
-    error.hint || "none",
-  ].join("\n");
-}
-
-function formatSaveFailedMessage(error: SupabaseDeleteError) {
-  return [
-    "Save failed",
-    "",
-    "Code:",
-    error.code || "none",
-    "",
-    "Message:",
-    error.message || "none",
-    "",
-    "Details:",
-    error.details || "none",
-    "",
-    "Hint:",
-    error.hint || "none",
-  ].join("\n");
-}
-
-function formatUpdateFailedMessage(error: SupabaseDeleteError) {
-  return [
-    "Update failed",
     "",
     "Code:",
     error.code || "none",
@@ -1378,7 +1343,7 @@ function BehaviorSetupSection({
 }
 
 function normalizeBehaviorList(behaviors: Behavior[] | undefined | null) {
-  return (behaviors || []).map((behavior) => ({
+  return (Array.isArray(behaviors) ? behaviors : []).filter((behavior) => behavior && typeof behavior === "object").map((behavior) => ({
     ...behavior,
     occurrences: normalizeBehaviorOccurrences(behavior),
   }));
@@ -1599,11 +1564,13 @@ function ActiveVisit({
   onComplete,
   prevVisit,
   isEditing = false,
+  isSaving = false,
 }: {
   visit: Visit;
   onComplete: (completed: Visit) => void;
   prevVisit?: Visit | null;
   isEditing?: boolean;
+  isSaving?: boolean;
 }) {
   const [totalStudents, setTotalStudents] = useState<number | null>(() =>
     visit.type === "classroom" ? Math.max(1, Math.floor(visit.totalStudents || 1)) : null
@@ -1949,7 +1916,7 @@ function ActiveVisit({
         width: "100%", background: "linear-gradient(135deg, #10b981, #34d399)",
         color: "#0f172a", border: "none", borderRadius: 12, padding: "16px",
         fontSize: 16, fontWeight: 900, cursor: "pointer", letterSpacing: "0.02em"
-      }}>{isEditing ? "Save Changes" : `Complete Visit (${fmtTime(elapsed)})`}</button>
+      }}>{isSaving ? "Saving..." : isEditing ? "Save Changes" : `Complete Visit (${fmtTime(elapsed)})`}</button>
     </div>
   );
 }
@@ -1958,10 +1925,12 @@ function ActiveFbaVisit({
   visit,
   onComplete,
   isEditing = false,
+  isSaving = false,
 }: {
   visit: Visit;
   onComplete: (completed: Visit) => void;
   isEditing?: boolean;
+  isSaving?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(() => Math.max(0, Math.floor(visit.totalDuration || 0)));
   const startRef = useRef<number>(visit.startTime);
@@ -2886,7 +2855,7 @@ function ActiveFbaVisit({
         color: "#0f172a", border: "none", borderRadius: 14, padding: "16px",
         fontSize: 15, fontWeight: 900, cursor: "pointer"
       }}>
-        {isEditing ? "Save Changes" : `Complete FBA (${fmtTime(elapsed)})`}
+        {isSaving ? "Saving..." : isEditing ? "Save Changes" : `Complete FBA (${fmtTime(elapsed)})`}
       </button>
     </div>
   );
@@ -3922,6 +3891,7 @@ function Reports({
 function PageInner() {
   const { user } = useAuth();
   const canManageAllObservations = isObservationAdmin(user);
+  const userId = user?.id;
   const [data, setData] = useState<DataState | null>(null);
   const [screen, setScreen] = useState<"home" | "new-visit" | "active" | "history" | "reports">("home"); // home | new-visit | active | history | reports
   const [activeVisit, setActiveVisit] = useState<Visit | null>(null);
@@ -3942,6 +3912,15 @@ function PageInner() {
   const [observationSelectionCard, setObservationSelectionCard] = useState<ObservationSelectionCard>("student");
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState<ReportToast>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const saveInFlight = useRef(false);
+  const pendingWrite = useRef<PendingVisitWrite | null>(null);
+  const pendingSnapshot = useRef<Visit | null>(null);
+  const [saveUnconfirmed, setSaveUnconfirmed] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyGeneration = useRef(0);
+  const historyOwner = useRef<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlFirstVisitParam = searchParams.get("firstVisit");
@@ -3949,6 +3928,17 @@ function PageInner() {
     urlFirstVisitParam === "true" ? true : urlFirstVisitParam === "false" ? false : undefined;
   const newVisitStep = (searchParams.get("step") === "details" ? "details" : "firstVisit") as "firstVisit" | "details";
   const selectedFirstVisit = isFirstVisitFromUrl ?? newVisitForm.isFirstVisit;
+  const missingStartFields = [
+    !newVisitForm.subjectName.trim() && "Student or classroom name",
+    !newVisitForm.observerName.trim() && "Observer name",
+    !newVisitForm.grade && "Grade",
+    !newVisitForm.selectedDistrict && "District",
+    newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim() && "District name",
+    !newVisitForm.schoolName.trim() && "School",
+    selectedFirstVisit === undefined && "First-visit answer",
+    newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus && "Previous-feedback implementation",
+    (historyLoading || historyError || !data) && "Successfully loaded observation history",
+  ].filter(Boolean);
   const isObservationActive = screen === "active" && Boolean(activeVisit);
 
   useEffect(() => {
@@ -3980,47 +3970,35 @@ function PageInner() {
   };
 
   const fetchPersistedVisits = useCallback(async () => {
-    const logSupabaseError = (label: string, error: any) => {
-      if (!error) return;
-      console.error(label, {
-        message: error.message,
-        details: (error as any).details,
-        hint: (error as any).hint,
-        code: (error as any).code,
-        raw: error,
-      });
-    };
-
-    if (!user?.id) {
-      setData({ visits: [], subjects: [] });
-      return;
+    const ticket = ++historyGeneration.current;
+    if (!userId) return;
+    if (historyOwner.current !== userId) {
+      historyOwner.current = userId;
+      setData(null);
     }
-
-    console.info("[visits] Fetch start: visits table");
+    setHistoryLoading(true);
+    setHistoryError("");
     try {
       let query = supabase
         .from("visits")
         .select("*")
         .order("start_time", { ascending: false });
 
-      if (!canManageAllObservations) query = query.eq("created_by", user.id);
+      if (!canManageAllObservations) query = query.eq("created_by", userId);
 
-      const { data: visits, error } = await query;
-
-      if (error) {
-        logSupabaseError("[visits] Fetch error", error);
-        setData({ visits: [], subjects: [] });
-        return;
-      }
-
-      const mappedVisits: Visit[] = (visits || []).map((v: any) => {
+      const controller = new AbortController();
+      const result = await withDeadline(query.abortSignal(controller.signal), () => controller.abort());
+      if (ticket !== historyGeneration.current) return;
+      if (result.error) throw Object.assign(new Error("History unavailable"), { code: result.error.code, status: result.status });
+      if (!Array.isArray(result.data)) throw new Error("Invalid history response");
+      const mappedVisits: Visit[] = result.data.filter((v) => v && typeof v === "object").map((v: any) => {
         const start = v.start_time ?? v.startTime;
         const end = v.end_time ?? v.endTime;
 
         return {
           ...v,
           type: (v.observation_type ?? v.type ?? "student") as Visit["type"],
-          subjectName: v.subject_name ?? v.subjectName,
+          subjectName: safeSubjectName(v.subject_name ?? v.subjectName),
           observerName: v.observer_name ?? v.observerName,
           isFirstVisit: v.is_first_visit ?? v.isFirstVisit,
           implementationStatus: v.implementation_status ?? v.implementationStatus,
@@ -4044,19 +4022,20 @@ function PageInner() {
         };
       });
 
-      console.info("[visits] Fetch success", {
-        count: mappedVisits.length,
-        newestStartTime: mappedVisits[0]?.startTime ?? null,
-      });
       setData({ visits: mappedVisits, subjects: [] });
-    } catch (e) {
-      console.error("[visits] Fetch failed (exception)", e);
-      setData({ visits: [], subjects: [] });
+    } catch (error) {
+      if (ticket !== historyGeneration.current) return;
+      logDiagnostic("history-load", error);
+      setHistoryError("Observation history could not be loaded. Check your connection and retry. Existing history has not been replaced.");
+    } finally {
+      if (ticket === historyGeneration.current) setHistoryLoading(false);
     }
-  }, [canManageAllObservations, user]);
+  }, [canManageAllObservations, userId]);
 
   useEffect(() => {
     void fetchPersistedVisits();
+    const generation = historyGeneration;
+    return () => { generation.current++; };
   }, [fetchPersistedVisits]);
 
   const persistData = useCallback((d: DataState) => {
@@ -4064,6 +4043,8 @@ function PageInner() {
   }, []);
 
   const startVisit = () => {
+    if (historyLoading || historyError || !data) return;
+    setSaveToast(null);
     if (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim()) return;
     if (!newVisitForm.grade) return;
     if (selectedFirstVisit === undefined) return;
@@ -4076,7 +4057,7 @@ function PageInner() {
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
-      v.subjectName.toLowerCase() === newVisitForm.subjectName.toLowerCase() && v.type === newVisitForm.type
+      safeSubjectName(v.subjectName).toLowerCase() === newVisitForm.subjectName.toLowerCase() && v.type === newVisitForm.type
     ).sort((a, b) => b.startTime - a.startTime);
 
     const prevBehaviors =
@@ -4112,6 +4093,7 @@ function PageInner() {
   };
 
   const editVisit = (visit: Visit) => {
+    setSaveToast(null);
     setSelectedVisit(null);
     setEditingVisitId(visit.id);
     setActiveVisit({ ...visit, prevVisit: null });
@@ -4119,168 +4101,130 @@ function PageInner() {
   };
 
   const completeVisit = async (completedVisit: Visit) => {
-    if (!user?.id) {
-      console.error("[visits] Save blocked: no authenticated user found.");
-      return;
-    }
-
-    const isEditing = editingVisitId === completedVisit.id;
-    const completedWithTimestamp: Visit = isEditing
-      ? { ...completedVisit, updatedAt: new Date().toISOString() }
-      : completedVisit;
-
-    const logSupabaseError = (label: string, error: any) => {
-      if (!error) return;
-      console.error(label, {
-        message: error.message,
-        details: (error as any).details,
-        hint: (error as any).hint,
-        code: (error as any).code,
-        raw: error,
-      });
-    };
-
-    const visitObjectBase = {
-      subject_name: completedVisit.subjectName,
-      observer_name: completedVisit.observerName,
-      type: completedVisit.type ?? "",
-      district: completedVisit.district ?? "",
-      school_name: completedVisit.schoolName ?? "",
-      grade: completedVisit.grade ?? "",
-      total_students: completedVisit.totalStudents ?? 0,
-      start_time: completedVisit.startTime ? new Date(completedVisit.startTime).getTime() : null,
-      end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
-      total_duration: completedVisit.totalDuration ?? null,
-      behaviors: completedVisit.behaviors ?? [],
-      notes: completedVisit.notes ?? null,
-      recommendations: completedVisit.recommendations ?? null,
-      implementation_status: completedVisit.implementationStatus ?? null,
-      implementation_notes: completedVisit.implementationNotes ?? null,
-    };
-
-    const visitObject = {
-      ...visitObjectBase,
-      // For forward compatibility with schemas that store the observation type separately.
-      ...(completedVisit.type ? { observation_type: completedVisit.type } : {}),
-      ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
-      ...(completedVisit.type === "fba"
-        ? {
-          abc_entries: completedVisit.abcEntries ?? [],
-          latency_records: completedVisit.latencyRecords ?? [],
-          fba_latency_events: completedVisit.fbaLatencyEvents ?? [],
-          interval_records: completedVisit.intervalRecords ?? [],
-          interval_length_sec: completedVisit.intervalLengthSec ?? null,
-          fba_interval_sessions: completedVisit.fbaIntervalSessions ?? [],
-        }
-        : {}),
-    };
-
-    console.info(isEditing ? "[visits] Update start" : "[visits] Insert start", {
-      type: completedVisit.type,
-      subject: completedVisit.subjectName,
-      startTime: completedVisit.startTime,
-    });
-
-    const missingColumnPattern =
-      /(is_first_visit|district|implementation_status|implementation_notes|observation_type|notes|recommendations|abc_entries|latency_records|fba_latency_events|interval_records|interval_length_sec|fba_interval_sessions|updated_at)/i;
-
-    if (isEditing) {
-      let updateObject: Record<string, unknown> = { ...visitObject, updated_at: completedWithTimestamp.updatedAt };
-      let updateQuery = supabase
-        .from("visits")
-        .update(updateObject)
-        .eq("id", completedVisit.id);
-      if (!canManageAllObservations) updateQuery = updateQuery.eq("created_by", user.id);
-      let updateResult = await updateQuery.select();
-
-      if (updateResult.error && missingColumnPattern.test(updateResult.error.message || "")) {
-        logSupabaseError("[visits] Update retry due to missing column(s)", updateResult.error);
-        updateObject = { ...visitObjectBase, updated_at: completedWithTimestamp.updatedAt };
-        updateQuery = supabase
-          .from("visits")
-          .update(updateObject)
-          .eq("id", completedVisit.id);
-        if (!canManageAllObservations) updateQuery = updateQuery.eq("created_by", user.id);
-        updateResult = await updateQuery.select();
-      }
-
-      if (updateResult.error) {
-        logSupabaseError("[visits] Update error", updateResult.error);
-        setSaveToast({ type: "error", message: formatUpdateFailedMessage(updateResult.error) });
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    setIsSaving(true);
+    setSaveToast(null);
+    let writeConfirmed = false;
+    try {
+      if (!user?.id) {
+        setSaveToast({ type: "error", message: "Your session must be verified before saving. Use Retry session verification. Keep this tab open to preserve your observation." });
         return;
       }
-
-      if (!updateResult.data?.length) {
-        console.error("[visits] Update blocked: no owned visit row was updated.", { id: completedVisit.id });
-        setSaveToast({
-          type: "error",
-          message: [
-            "No observation was updated.",
-            "",
-            "This usually means:",
-            "",
-            "- the observation no longer exists",
-            "- you no longer own this observation",
-            "- your session is out of date",
-          ].join("\n"),
-        });
-        return;
-      }
-
-      console.info("[visits] Update success", { rowsUpdated: updateResult.data.length });
-      console.debug("[visits] Update response data:", updateResult.data);
-    } else {
-      const insertObject = {
-        id: completedVisit.id,
-        created_by: user.id,
-        ...visitObject,
+      const unresolved = pendingWrite.current;
+      let savedVisit = completedVisit;
+      const isEditing = editingVisitId === completedVisit.id;
+      const completedWithTimestamp: Visit = isEditing
+        ? { ...completedVisit, updatedAt: new Date().toISOString() } : completedVisit;
+      const visitObjectBase = {
+        subject_name: completedVisit.subjectName,
+        observer_name: completedVisit.observerName,
+        type: completedVisit.type ?? "",
+        district: completedVisit.district ?? "",
+        school_name: completedVisit.schoolName ?? "",
+        grade: completedVisit.grade ?? "",
+        total_students: completedVisit.totalStudents ?? 0,
+        start_time: completedVisit.startTime ? new Date(completedVisit.startTime).getTime() : null,
+        end_time: completedVisit.endTime ? new Date(completedVisit.endTime).getTime() : null,
+        total_duration: completedVisit.totalDuration ?? null,
+        behaviors: completedVisit.behaviors ?? [],
+        notes: completedVisit.notes ?? null,
+        recommendations: completedVisit.recommendations ?? null,
+        implementation_status: completedVisit.implementationStatus ?? null,
+        implementation_notes: completedVisit.implementationNotes ?? null,
       };
-      const insertObjectBase = {
-        id: insertObject.id,
-        created_by: user.id,
+
+      const visitObject: Record<string, unknown> = {
         ...visitObjectBase,
+        ...(completedVisit.type ? { observation_type: completedVisit.type } : {}),
+        ...(completedVisit.isFirstVisit !== undefined ? { is_first_visit: completedVisit.isFirstVisit } : {}),
+        ...(completedVisit.type === "fba"
+          ? {
+            abc_entries: completedVisit.abcEntries ?? [],
+            latency_records: completedVisit.latencyRecords ?? [],
+            fba_latency_events: completedVisit.fbaLatencyEvents ?? [],
+            interval_records: completedVisit.intervalRecords ?? [],
+            interval_length_sec: completedVisit.intervalLengthSec ?? null,
+            fba_interval_sessions: completedVisit.fbaIntervalSessions ?? [],
+          }
+          : {}),
       };
-      let insertResult = await supabase.from("visits").insert([insertObject]).select();
-      if (insertResult.error && missingColumnPattern.test(insertResult.error.message || "")) {
-        logSupabaseError("[visits] Insert retry due to missing column(s)", insertResult.error);
-        insertResult = await supabase.from("visits").insert([insertObjectBase]).select();
-      }
 
-      if (insertResult.error) {
-        logSupabaseError("[visits] Insert error", insertResult.error);
-        setSaveToast({ type: "error", message: formatSaveFailedMessage(insertResult.error) });
-        return;
+      let write: PendingVisitWrite;
+      if (unresolved) {
+        if (unresolved.id !== completedVisit.id || unresolved.userId !== user.id || !pendingSnapshot.current) {
+          throw new Error("Pending save belongs to another editor");
+        }
+        write = unresolved;
+        savedVisit = pendingSnapshot.current;
+        if (!await reconcileVisit(supabase, write, canManageAllObservations)) {
+          throw new Error("Save cannot yet be confirmed");
+        }
+      } else {
+        if (isEditing) visitObject.updated_at = completedWithTimestamp.updatedAt;
+        write = { id: completedVisit.id, userId: user.id, editing: isEditing, payload: visitObject };
+        // Keep the exact snapshot: a lost response can still mean a committed write.
+        pendingWrite.current = write;
+        pendingSnapshot.current = completedWithTimestamp;
+        const result = await writeVisit(supabase, write, canManageAllObservations);
+        if (result.error && !ambiguousWrite(result.status, result.error.code)) {
+          pendingWrite.current = null;
+          pendingSnapshot.current = null;
+          logDiagnostic("visit-write", { code: result.error.code, status: result.status });
+          setSaveToast({ type: "error", message: missingColumn(result.error.code)
+            ? "The database cannot store all required observation fields. Nothing has been discarded. Keep this tab open and contact support; the complete observation must be saved."
+            : result.status === 401 || result.status === 403
+              ? "Saving was denied. Verify your session and access, then retry. Your observation remains in this tab."
+              : "The database rejected the save. Your observation remains in this tab. Retry or contact support if this continues." });
+          return;
+        }
+        if (result.error) logDiagnostic("visit-write-unconfirmed", { code: result.error.code, status: result.status });
+        const confirmed = !result.error && result.data?.length === 1 && matchesWrite(result.data[0], write);
+        if (!confirmed && !await reconcileVisit(supabase, write, canManageAllObservations)) {
+          throw new Error("Save cannot yet be confirmed");
+        }
+        savedVisit = completedWithTimestamp;
       }
-
-      console.info("[visits] Insert success", { rowsInserted: insertResult.data?.length ?? 0 });
-      console.debug("[visits] Insert response data:", insertResult.data);
+      writeConfirmed = true;
+      pendingWrite.current = null;
+      pendingSnapshot.current = null;
+      setSaveToast(null);
+      historyGeneration.current++;
+      setHistoryLoading(false);
+      setData((previous) => ({
+        visits: [...(previous?.visits || []).filter((visit) => visit.id !== savedVisit.id), savedVisit],
+        subjects: previous?.subjects || [],
+      }));
+      setActiveVisit(null);
+      setEditingVisitId(null);
+      setScreen("home");
+      setTab("home");
+      setNewVisitForm({
+        type: "student",
+        subjectName: "",
+        observerName: "",
+        grade: "",
+        totalStudents: "",
+        selectedDistrict: "",
+        customDistrict: "",
+        schoolName: "",
+        isFirstVisit: undefined,
+      });
+      setObservationSelectionCard("student");
+      setImplementationStatus("");
+      router.push("/?step=firstVisit");
+    } catch (error) {
+      logDiagnostic("visit-save", error);
+      setSaveToast({ type: "error", message: writeConfirmed
+        ? "The observation was saved, but returning to Home could not be completed. Use Home to continue."
+        : pendingWrite.current
+        ? "The save outcome is unconfirmed. Your observation remains in this tab. Check your connection and select Check save status. Do not recreate this observation or close this tab."
+        : "The observation could not be saved. Your work remains in this tab. Check your connection and session, then retry." });
+    } finally {
+      saveInFlight.current = false;
+      setIsSaving(false);
+      setSaveUnconfirmed(Boolean(pendingWrite.current));
     }
-
-    const updatedVisits = isEditing
-      ? (data?.visits || []).map((visit) => (visit.id === completedWithTimestamp.id ? completedWithTimestamp : visit))
-      : [...(data?.visits || []), completedWithTimestamp];
-    const updated: DataState = { ...(data as DataState), visits: updatedVisits };
-
-    setData(updated);
-
-    setActiveVisit(null);
-    setEditingVisitId(null);
-    setScreen("home");
-    setTab("home");
-    setNewVisitForm({
-      type: "student",
-      subjectName: "",
-      observerName: "",
-      grade: "",
-      totalStudents: "",
-      selectedDistrict: "",
-      customDistrict: "",
-      schoolName: "",
-      isFirstVisit: undefined,
-    });
-    setObservationSelectionCard("student");
-    setImplementationStatus("");
-    router.push("/?step=firstVisit");
   };
 
   const deleteReportVisit = async (visitId: string) => {
@@ -4295,7 +4239,7 @@ function PageInner() {
       .select("id");
 
     if (error) {
-      console.error("DELETE ERROR:", error);
+      logDiagnostic("observation-delete", error);
       throw new Error(formatDeleteFailedMessage(error));
     }
     if (!deletedRows?.length) throw new Error("Report was not deleted.");
@@ -4314,7 +4258,7 @@ function PageInner() {
           ? v.type === "student" || v.type === "fba"
           : v.type === newVisitForm.type;
       if (!isEligible) continue;
-      const raw = (v.subjectName || "").trim();
+      const raw = safeSubjectName(v.subjectName).trim();
       if (!raw) continue;
       const k = keyFor(raw);
       if (!byKey.has(k)) byKey.set(k, raw);
@@ -4327,7 +4271,7 @@ function PageInner() {
       <div style={{
         minHeight: "100vh", background: "#0f172a", display: "flex",
         alignItems: "center", justifyContent: "center", color: "#64748b", fontSize: 16
-      }}>Loading...</div>
+      }}><div role="status"><p>{historyError || "Loading observation history..."}</p><button onClick={() => void fetchPersistedVisits()}>Retry history loading</button></div></div>
     );
   }
 
@@ -4403,18 +4347,27 @@ function PageInner() {
       {/* Content */}
       <div style={{ padding: "20px 16px", maxWidth: 720, margin: "0 auto" }}>
 
+        {(historyLoading || historyError) && <div role="status"><p>{historyError || "Loading observation history..."}</p><button onClick={() => void fetchPersistedVisits()}>Retry history loading</button></div>}
         {/* Active visit */}
         {screen === "active" && activeVisit && (
-          activeVisit.type === "fba" ? (
-            <ActiveFbaVisit visit={activeVisit} onComplete={completeVisit} isEditing={editingVisitId === activeVisit.id} />
+          <>
+          {saveUnconfirmed && <p role="status">Save outcome unconfirmed. Your submitted observation is preserved. Use Check save status to verify it.</p>}
+          <fieldset disabled={isSaving || saveUnconfirmed} aria-busy={isSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          {activeVisit.type === "fba" ? (
+            <ActiveFbaVisit visit={activeVisit} onComplete={completeVisit} isEditing={editingVisitId === activeVisit.id} isSaving={isSaving} />
           ) : (
             <ActiveVisit
               visit={activeVisit}
               prevVisit={activeVisit.prevVisit}
               onComplete={completeVisit}
               isEditing={editingVisitId === activeVisit.id}
+              isSaving={isSaving}
             />
-          )
+          )}
+          </fieldset>
+          {isSaving && <p role="status">Saving... Please keep this tab open.</p>}
+          {saveUnconfirmed && <button type="button" disabled={isSaving} onClick={() => pendingSnapshot.current && void completeVisit(pendingSnapshot.current)}>Check save status</button>}
+          </>
         )}
 
         {/* New visit form */}
@@ -4677,7 +4630,7 @@ function PageInner() {
             {/* Prior visits hint */}
             {newVisitForm.subjectName.trim() && (() => {
               const prior = allVisits.filter(v =>
-                v.subjectName.toLowerCase() === newVisitForm.subjectName.toLowerCase().trim() && v.type === newVisitForm.type
+                safeSubjectName(v.subjectName).toLowerCase() === newVisitForm.subjectName.toLowerCase().trim() && v.type === newVisitForm.type
               );
               return prior.length > 0 ? (
                 <div style={{
@@ -4697,24 +4650,11 @@ function PageInner() {
               ) : null;
             })()}
 
-            <button onClick={startVisit}
-              disabled={
-                !newVisitForm.subjectName.trim() ||
-                !newVisitForm.observerName.trim() ||
-                !newVisitForm.grade ||
-                !newVisitForm.selectedDistrict ||
-                (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) ||
-                !newVisitForm.schoolName.trim() ||
-                selectedFirstVisit === undefined ||
-                (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus)
-              }
-              style={{
-                width: "100%", background: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || selectedFirstVisit === undefined || (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus))
-                  ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
-                color: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || selectedFirstVisit === undefined || (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus)) ? "#475569" : "#0f172a",
-                border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
-                cursor: (!newVisitForm.subjectName.trim() || !newVisitForm.observerName.trim() || !newVisitForm.grade || !newVisitForm.selectedDistrict || (newVisitForm.selectedDistrict === "Other" && !newVisitForm.customDistrict.trim()) || !newVisitForm.schoolName.trim() || selectedFirstVisit === undefined || (newVisitForm.type !== "fba" && selectedFirstVisit === false && !implementationStatus)) ? "not-allowed" : "pointer"
-              }}>Start Observation</button>
+            {missingStartFields.length > 0 && <p id="start-requirements" role="status">To start, complete: {missingStartFields.join(", ")}.</p>}
+            <button onClick={startVisit} disabled={missingStartFields.length > 0} aria-describedby={missingStartFields.length ? "start-requirements" : undefined}
+              style={{ width: "100%", background: missingStartFields.length ? "#1e293b" : "linear-gradient(135deg, #38bdf8, #818cf8)",
+                color: missingStartFields.length ? "#475569" : "#0f172a", border: "none", borderRadius: 12, padding: "16px", fontSize: 16, fontWeight: 900,
+                cursor: missingStartFields.length ? "not-allowed" : "pointer" }}>Start Observation</button>
               </>
             )}
           </div>
@@ -4825,7 +4765,7 @@ function PageInner() {
           onEdit={() => editVisit(selectedVisit)}
         />
       )}
-      <ReportToastMessage toast={saveToast} />
+      <div style={{ pointerEvents: "none" }}><ReportToastMessage toast={saveToast} /></div>
     </div>
   );
 }

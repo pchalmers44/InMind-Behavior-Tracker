@@ -14,7 +14,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { isObservationAdmin } from "@/lib/permissions";
+import { invalidSession, logDiagnostic, withDeadline } from "@/lib/reliability";
 
 type AuthContextValue = {
   isLoading: boolean;
@@ -251,90 +251,111 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
+  const [authError, setAuthError] = useState("");
+  const [sessionExpired, setSessionExpired] = useState(true);
+  const [retryKey, setRetryKey] = useState(0);
+  const verified = useRef<{ session: Session; user: User } | null>(null);
 
-    const clearInvalidSession = async () => {
-      await supabase.auth.signOut({ scope: "local" });
-      if (!isMounted) return;
+  useEffect(() => {
+    let mounted = true;
+    let generation = 0;
+    const scheduled = new Set<ReturnType<typeof setTimeout>>();
+    const current = (ticket: number) => mounted && ticket === generation;
+
+    const clearSession = () => {
+      verified.current = null;
+      setSessionExpired(true);
       setSession(null);
       setUser(null);
       setIsLoading(false);
-      if (!isLoginPage) {
-        router.replace("/login");
-      }
+      setAuthError("");
+      if (!isLoginPage) router.replace("/login");
     };
 
-    const syncSession = async () => {
+    const verify = async (ticket: number, candidate?: Session | null) => {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (!isMounted) return;
-        if (error) {
-          await clearInvalidSession();
+        if (candidate === undefined) {
+          const result = await withDeadline(supabase.auth.getSession());
+          if (!current(ticket)) return;
+          if (result.error) throw result.error;
+          candidate = result.data.session;
+        }
+        if (!current(ticket)) return;
+        if (!candidate) {
+          clearSession();
           return;
         }
-        let verifiedUser: User | null = null;
-        if (data.session) {
-          const { data: userData, error: userError } = await supabase.auth.getUser();
-          if (!isMounted) return;
-          if (userError || !userData.user) {
-            await clearInvalidSession();
-            return;
-          }
-          console.log("AUTH USER", userData.user);
-          console.log("APP METADATA", userData.user?.app_metadata);
-          console.log("ROLE", userData.user?.app_metadata?.role);
-          console.log("IS ADMIN", isObservationAdmin(userData.user));
-          verifiedUser = userData.user;
+        if (verified.current && verified.current.user.id !== candidate.user.id) {
+          verified.current = null;
+          setSession(null);
+          setUser(null);
         }
-        setSession(data.session ?? null);
-        setUser(verifiedUser);
+        // An explicit JWT avoids re-entering the SDK's session lock from auth events.
+        const result = await withDeadline(supabase.auth.getUser(candidate.access_token));
+        if (!current(ticket)) return;
+        if (result.error) throw result.error;
+        if (!result.data.user || result.data.user.id !== candidate.user.id ||
+            !candidate.expires_at || candidate.expires_at * 1000 <= Date.now()) {
+          throw new Error("Session verification incomplete");
+        }
+        verified.current = { session: candidate, user: result.data.user };
+        setSessionExpired(false);
+        setSession(candidate);
+        setUser(result.data.user);
+        setAuthError("");
         setIsLoading(false);
-        if (!data.session && !isLoginPage) {
-          router.replace("/login");
+      } catch (error) {
+        if (!current(ticket)) return;
+        logDiagnostic("auth-verification", error);
+        if (invalidSession(error)) {
+          clearSession();
+          // State is already blocked even if local SDK cleanup fails or stalls.
+          void withDeadline(supabase.auth.signOut({ scope: "local" })).catch((cleanupError) => {
+            logDiagnostic("auth-local-cleanup", cleanupError);
+          });
+          return;
         }
-      } catch {
-        await clearInvalidSession();
+        setIsLoading(false);
+        setAuthError("Unable to verify your session. Check your connection and retry. Your open observation is kept in this tab.");
       }
     };
 
-    void syncSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!isMounted) return;
-      if (nextSession) {
-        void (async () => {
-          const { data: userData, error: userError } = await supabase.auth.getUser();
-          if (!isMounted) return;
-          if (userError || !userData.user) {
-            await clearInvalidSession();
-            return;
-          }
-          console.log("AUTH USER", userData.user);
-          console.log("APP METADATA", userData.user?.app_metadata);
-          console.log("ROLE", userData.user?.app_metadata?.role);
-          console.log("IS ADMIN", isObservationAdmin(userData.user));
-          setSession(nextSession);
-          setUser(userData.user);
-          setIsLoading(false);
-        })();
+    setIsLoading(!verified.current);
+    setAuthError("");
+    void verify(++generation);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      const ticket = ++generation;
+      if (!mounted) return;
+      if (event === "SIGNED_OUT") {
+        clearSession();
         return;
       }
-      setSession(nextSession ?? null);
-      setUser(null);
-      setIsLoading(false);
-      if (!nextSession && !isLoginPage) {
-        router.replace("/login");
-      }
+      const timer = setTimeout(() => {
+        scheduled.delete(timer);
+        // INITIAL_SESSION can be null when the SDK's session read fails.
+        // Re-read it to distinguish a temporary failure from a missing session.
+        if (current(ticket)) void verify(ticket, nextSession ?? undefined);
+      }, 0);
+      scheduled.add(timer);
     });
-
     return () => {
-      isMounted = false;
+      mounted = false;
+      generation++;
+      scheduled.forEach(clearTimeout);
       subscription.unsubscribe();
     };
-  }, [isLoginPage, router]);
+  }, [isLoginPage, router, retryKey]);
+
+  useEffect(() => {
+    if (!session?.expires_at) return;
+    const timer = setTimeout(() => {
+      setSessionExpired(true);
+      setRetryKey((key) => key + 1);
+    }, Math.max(0, session.expires_at * 1000 - Date.now()));
+    return () => clearTimeout(timer);
+  }, [session]);
+
+  const accessReady = Boolean(session && user && !sessionExpired);
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
@@ -345,25 +366,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       isLoading,
-      session,
-      user,
+      session: accessReady ? session : null,
+      user: accessReady ? user : null,
       logout,
     }),
-    [isLoading, logout, session, user]
+    [accessReady, isLoading, logout, session, user]
   );
 
-  if (!isLoginPage && (isLoading || !session)) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#0f172a" }} />
-    );
-  }
+  const recovery = (
+    <div role="status" style={{ padding: 20, background: "#0f172a", color: "#e2e8f0" }}>
+      <p>{authError || "Verifying your session..."}</p>
+      <button type="button" onClick={() => setRetryKey((key) => key + 1)}>Retry session verification</button>
+    </div>
+  );
 
   return (
     <AuthContext.Provider value={value}>
-      {!isLoginPage && session?.user?.email ? (
+      {((!isLoginPage && !accessReady) || authError) ? recovery : null}
+      {!isLoginPage && accessReady && session?.user?.email ? (
         <AuthOverlay email={session.user.email} onLogout={logout} />
       ) : null}
-      {children}
+      {isLoginPage ? children : user ? (
+        // Keep verified editors mounted while access is blocked during transient recovery.
+        <div hidden={!accessReady} inert={!accessReady}>{children}</div>
+      ) : null}
     </AuthContext.Provider>
   );
 }

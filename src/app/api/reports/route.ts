@@ -1,3 +1,4 @@
+import { logDiagnostic } from "@/lib/reliability";
 import { NextResponse, type NextRequest } from "next/server";
 import ExcelJS from "exceljs";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -401,7 +402,7 @@ async function buildOrganizationalExport(
   const { data, error } = await query;
 
   if (error) {
-    console.error("Supabase organizational reports query error:", error);
+    logDiagnostic("report-request", error);
     return NextResponse.json({ ok: false, error: "Failed to fetch report visits." }, { status: 500 });
   }
 
@@ -637,13 +638,13 @@ export async function GET(req: NextRequest) {
     }
 
     if (error) {
-      console.error("Supabase reports query error:", error);
+      logDiagnostic("report-request", error);
       return NextResponse.json({ ok: false, error: "Failed to fetch observations." }, { status: 500 });
     }
 
     rows = (Array.isArray(data) ? data : []) as unknown as ObservationRow[];
   } catch (e) {
-    console.error("Reports route error:", e);
+    logDiagnostic("report-request", e);
     return NextResponse.json({ ok: false, error: "Server misconfiguration." }, { status: 500 });
   }
 

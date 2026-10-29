@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { isObservationAdmin } from "@/lib/permissions";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { logDiagnostic, withDeadline } from "@/lib/reliability";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { user, session } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -15,107 +17,63 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const isRecoveryRef = useRef(false);
 
   useEffect(() => {
-    let isMounted = true;
+    if (user && session && !isRecoveryRef.current) router.replace("/");
+  }, [router, session, user]);
 
-    const checkSession = async () => {
-      const { data, error: sessionError } = await supabase.auth.getSession();
-      if (!isMounted) return;
-      if (sessionError) {
-        setError(sessionError.message);
-        return;
-      }
-      if (data.session) {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (!isMounted) return;
-        if (userError || !userData.user) {
-          if (isSubmittingRef.current) return;
-          await supabase.auth.signOut({ scope: "local" });
-          return;
-        }
-        console.log("AUTH USER", userData.user);
-        console.log("APP METADATA", userData.user?.app_metadata);
-        console.log("ROLE", userData.user?.app_metadata?.role);
-        console.log("IS ADMIN", isObservationAdmin(userData.user));
-        router.replace("/");
-      }
-    };
-
-    void checkSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
+        isRecoveryRef.current = true;
         router.replace("/change-password?recovery=1");
-        return;
-      }
-      if (session) {
-        void (async () => {
-          const { data: userData, error: userError } = await supabase.auth.getUser();
-          if (userError || !userData.user) {
-            if (isSubmittingRef.current) return;
-            await supabase.auth.signOut({ scope: "local" });
-            return;
-          }
-          console.log("AUTH USER", userData.user);
-          console.log("APP METADATA", userData.user?.app_metadata);
-          console.log("ROLE", userData.user?.app_metadata?.role);
-          console.log("IS ADMIN", isObservationAdmin(userData.user));
-          router.replace("/");
-        })();
       }
     });
-
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, [router]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
     setIsSubmitting(true);
     setError("");
     setMessage("");
 
-    await supabase.auth.signOut({ scope: "local" });
+    try {
+      await withDeadline(supabase.auth.signOut({ scope: "local" }));
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+      const { data, error: signInError } = await withDeadline(supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      }));
 
-    if (signInError) {
+      if (signInError) {
+        setError(signInError.message);
+        return;
+      }
+
+      if (!data.session) {
+        setError("Sign in succeeded, but no session was returned. Please try again.");
+        return;
+      }
+
+      const { data: userData, error: userError } = await withDeadline(supabase.auth.getUser(data.session.access_token));
+      if (userError || !userData.user) {
+        setError(userError?.message || "Sign in succeeded, but the user profile could not be loaded. Please try again.");
+        return;
+      }
+
+      router.replace("/");
+      router.refresh();
+    } catch (failure) {
+      logDiagnostic("login", failure);
+      setError("Sign in could not be completed. Check your connection and retry.");
+    } finally {
       isSubmittingRef.current = false;
-      setError(signInError.message);
       setIsSubmitting(false);
-      return;
     }
-
-    if (!data.session) {
-      isSubmittingRef.current = false;
-      setError("Sign in succeeded, but no session was returned. Please try again.");
-      setIsSubmitting(false);
-      return;
-    }
-
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData.user) {
-      isSubmittingRef.current = false;
-      setError(userError?.message || "Sign in succeeded, but the user profile could not be loaded. Please try again.");
-      setIsSubmitting(false);
-      return;
-    }
-    console.log("AUTH USER", userData.user);
-    console.log("APP METADATA", userData.user?.app_metadata);
-    console.log("ROLE", userData.user?.app_metadata?.role);
-    console.log("IS ADMIN", isObservationAdmin(userData.user));
-
-    router.replace("/");
-    router.refresh();
   };
 
   const handleForgotPassword = async () => {
