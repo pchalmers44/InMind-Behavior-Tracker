@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
@@ -40,7 +44,7 @@ const reliability = evaluate(fs.readFileSync("src/lib/reliability.ts", "utf8")).
 const componentSource = [declaration("BEHAVIOR_LIBRARY"), declaration("INTENSITY_LEVELS"),
   ...["uid", "fmtTime", "fmtDuration", "calcRate", "Badge", "IntensityPicker", "normalizeBehaviorList",
     "resetBehaviorForNewVisit", "appendBehaviorOccurrence", "setBehaviorOccurrenceIntensity",
-    "BehaviorSetupSection", "ActiveVisit", "ActiveFbaVisit"].map(functionSource),
+    "useBehaviorDurationTimer", "BehaviorSetupSection", "ActiveVisit", "ActiveFbaVisit"].map(functionSource),
   "globalThis.api = { BEHAVIOR_LIBRARY, normalizeBehaviorList, resetBehaviorForNewVisit, BehaviorSetupSection, ActiveVisit, ActiveFbaVisit };",
 ].join("\n");
 const json = (value) => JSON.parse(JSON.stringify(value));
@@ -78,7 +82,7 @@ function trackingHarness(workflow, { visit = syntheticVisit(workflow), editing =
     },
     useEffect(effect) { effects.push(effect); },
     setInterval(tick) { timerTick = tick; return 1; }, clearInterval() {},
-    useBehaviorDurationTimer() {}, ObservationDurationEditor() { return null; },
+    ObservationDurationEditor() { return null; },
   });
   const api = context.api;
   const component = workflow === "fba" ? api.ActiveFbaVisit : api.ActiveVisit;
@@ -107,6 +111,11 @@ function trackingHarness(workflow, { visit = syntheticVisit(workflow), editing =
   }
   render();
   return { api, render, section, shared, html, complete, tree: () => tree,
+    tickDurations(ms) {
+      now += ms;
+      const effect = effects.find((item) => item.toString().includes("setDurationTimers"));
+      assert(effect); effect(); timerTick(); render();
+    },
     finishInterval() {
       const ticking = effects.find((effect) => effect.toString().includes("setIntervalCountdown"));
       const seconds = Number(content(tree).match(/Countdown: (\d+)s/)[1]);
@@ -118,7 +127,7 @@ function trackingHarness(workflow, { visit = syntheticVisit(workflow), editing =
     },
     advance(ms) { now += ms; } };
 }
-function persistenceHarness(api) {
+function persistenceHarness(api, { writes = [] } = {}) {
   const rows = new Map(), requests = [], state = { data: { visits: [], subjects: [] } };
   const client = { from(table) {
     assert.equal(table, "visits");
@@ -131,6 +140,10 @@ function persistenceHarness(api) {
       eq(key, value) { filters.push([key, value]); return query; },
       then(resolve, reject) {
         requests.push({ table, operation, payload: payload && json(payload), filters });
+        if (operation !== "select" && writes.length) {
+          const response = writes.shift();
+          return (response instanceof Error ? Promise.reject(response) : Promise.resolve(response)).then(resolve, reject);
+        }
         let result;
         if (operation === "insert") {
           assert(!rows.has(payload.id)); rows.set(payload.id, json(payload)); result = [rows.get(payload.id)];
@@ -167,7 +180,7 @@ function persistenceHarness(api) {
 }
 
 for (const workflow of workflows) {
-  for (const count of [1, 3, 4, 6, 10]) {
+  for (const count of [1, 2, 3, 4, 6, 10]) {
     for (const mode of ["library", "custom"]) {
       test(`${workflow}: add, track, render, save, reload, edit ${count} ${mode} behaviors`, async () => {
         const h = trackingHarness(workflow);
@@ -275,6 +288,59 @@ for (const workflow of workflows) {
     next.section().onAddBehaviorFromLibrary(next.section().availableLib[0]); next.render();
     assert.equal(next.section().behaviors.length, workflow === "fba" ? 1 : 11,
       "Subsequent observations still permit additional behaviors");
+  });
+}
+
+const browser = [
+  path.join(process.env.ProgramFiles || "C:/Program Files", "Google/Chrome/Application/chrome.exe"),
+  path.join(process.env["ProgramFiles(x86)"] || "C:/Program Files (x86)", "Microsoft/Edge/Application/msedge.exe"),
+].find((file) => fs.existsSync(file));
+for (const [width, height] of [[390, 844], [1280, 900]]) {
+  test(`browser ${width}px: pending intensity permits pointer access to Add, library, and custom controls`, { skip: !browser }, () => {
+    const h = trackingHarness("student");
+    h.section().onAddBehaviorFromLibrary(h.section().availableLib.find((item) => item.category === "challenging" && item.type === "frequency")); h.render();
+    h.section().onRecordFrequency(h.section().behaviors[0].id); h.render();
+    h.section().onToggleAddBehavior(); h.render();
+    h.section().setCustomBehavior({ label: "Synthetic custom", type: "frequency", behaviorType: "positive" }); h.render();
+    const directory = fs.mkdtempSync(path.join(tmpdir(), "inmind-behavior-browser-"));
+    try {
+      const fixture = path.join(directory, "synthetic.html");
+      const document = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;box-sizing:border-box">${h.html()}<script>
+        const controls = [document.querySelector('button[aria-controls="behavior-picker"]'),
+          document.querySelector('#behavior-picker button'),
+          [...document.querySelectorAll('#behavior-picker button')].at(-1),
+          document.querySelector('input[placeholder="Behavior name..."]')];
+        const hits = controls.map(control => {
+          control.scrollIntoView({block:'center'});
+          const box = control.getBoundingClientRect();
+          const target = document.elementFromPoint(box.x + box.width/2, box.y + box.height/2);
+          return !control.matches(':disabled') && (target === control || control.contains(target));
+        });
+        const report = window.parent.document.body;
+        report.dataset.behaviorHits = hits.join(',');
+        report.dataset.overflow = [document.querySelector('#behavior-picker'), document.querySelector('[aria-label="Intensity rating"]')].some(element => {
+          const box = element.getBoundingClientRect();
+          return box.width > window.innerWidth || box.right > window.innerWidth || element.scrollWidth > element.clientWidth;
+        });
+        report.dataset.viewport = window.innerWidth;
+      </script></body></html>`;
+      // A fixed-size child viewport avoids platform window-frame/minimum-size differences.
+      const escaped = document.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+      fs.writeFileSync(fixture, `<!doctype html><body style="margin:0"><iframe style="border:0;width:${width}px;height:${height}px" srcdoc="${escaped}"></iframe></body>`);
+      // Trusted local synthetic markup in a disposable profile, inside the runner's sandbox.
+      const output = execFileSync(browser, ["--headless", "--disable-gpu", "--in-process-gpu", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
+        "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions",
+        `--user-data-dir=${path.join(directory, "profile")}`, `--window-size=${Math.max(width + 100, 1280)},${height + 200}`, "--dump-dom", pathToFileURL(fixture).href],
+      { encoding: "utf8", timeout: 30_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      assert.equal(output.match(/data-behavior-hits="([^"]*)"/)?.[1], "true,true,true,true", "Rendered controls must receive pointer hits while intensity is pending");
+      assert.equal(output.match(/data-overflow="([^"]*)"/)?.[1], "false", "Picker and intensity prompt must fit the viewport");
+      assert.equal(Number(output.match(/data-viewport="([^"]*)"/)?.[1]), width, "Check the actual viewport width");
+    } finally {
+      const resolved = fs.realpathSync(directory);
+      assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(tmpdir()).toLowerCase());
+      assert(path.basename(resolved).startsWith("inmind-behavior-browser-"));
+      fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
 }
 
@@ -485,16 +551,158 @@ test("FBA: existing report calculations count preserved targets once and filter 
   }
 });
 
-test("challenging-behavior intensity overlay clears with Skip, preserving every selection", () => {
-  const h = trackingHarness("student");
-  for (let index = 0; index < 4; index++) {
-    h.section().onAddBehaviorFromLibrary(h.section().availableLib.find((item) => item.category === "challenging" && item.type === "frequency")); h.render();
+for (const workflow of workflows) {
+  for (const trigger of ["frequency", "duration"]) {
+    test(`${workflow}: pending ${trigger} intensity must not block Add Behavior`, () => {
+      const h = trackingHarness(workflow);
+      h.section().setCustomBehavior({ label: "Synthetic challenging", type: trigger, behaviorType: "challenging" });
+      h.render(); h.section().onAddCustomBehavior(); h.render();
+      const id = h.section().behaviors[0].id;
+      if (trigger === "frequency") h.section().onRecordFrequency(id);
+      else {
+        h.section().onToggleDuration(id); h.render(); h.advance(2500);
+        h.section().onToggleDuration(id);
+      }
+      h.render();
+      assert(h.section().pendingIntensity);
+      assert(!nodes(h.shared()).some((node) => node.props?.style?.position === "fixed" &&
+        node.props.style.inset === 0 && node.props.style.pointerEvents !== "none"),
+      "A viewport-covering intensity backdrop intercepts Add Behavior clicks");
+      const prompt = json(h.section().pendingIntensity);
+      h.section().onToggleAddBehavior(); h.render();
+      const library = h.section().availableLib[0];
+      h.section().onAddBehaviorFromLibrary(library); h.render();
+      h.section().setCustomBehavior({ label: "Synthetic additional", type: "frequency", behaviorType: "positive" });
+      h.render(); h.section().onAddCustomBehavior(); h.render();
+      assert.equal(h.section().behaviors.length, 3);
+      assert.deepEqual(json(h.section().pendingIntensity), prompt);
+      assert.equal(h.section().showAddBehavior, true);
+      h.section().onChooseIntensity(3); h.render();
+      assert.equal(h.section().pendingIntensity, null);
+      assert.equal(h.section().behaviors[0].occurrences[0].intensity, 3);
+      if (trigger === "frequency") assert.equal(h.section().behaviors[0].count, 1);
+      else assert.equal(h.section().durationTimers[id], 2);
+    });
   }
-  h.section().onRecordFrequency(h.section().behaviors[3].id); h.render();
-  assert(nodes(h.shared()).some((node) => node.props?.style?.position === "fixed" && node.props.style.zIndex === 120));
-  assert(h.section().pendingIntensity);
-  h.section().onSkipIntensity(); h.render();
-  assert.equal(h.section().pendingIntensity, null);
-  assert.equal(h.section().behaviors.length, 4);
-  assert.equal(h.section().behaviors[3].count, 1);
+  test(`${workflow}: duplicate queued library clicks must append only once`, () => {
+    const h = trackingHarness(workflow), section = h.section(), definition = section.availableLib[0];
+    section.onAddBehaviorFromLibrary(definition); section.onAddBehaviorFromLibrary(definition); h.render();
+    assert.equal(h.section().behaviors.length, 1);
+  });
+
+  test(`${workflow}: setup starts with an available picker and supports the first addition`, () => {
+    const initial = trackingHarness(workflow), p = persistenceHarness(initial.api);
+    const visit = syntheticVisit(workflow);
+    p.context.data = { visits: [] }; p.context.selectedFirstVisit = true;
+    p.context.newVisitForm = { type: visit.type, subjectName: visit.subjectName, observerName: visit.observerName,
+      grade: visit.grade, selectedDistrict: visit.district, schoolName: visit.schoolName };
+    p.startVisit();
+    assert.equal(p.state.active.behaviors.length, 0);
+    const h = trackingHarness(workflow, { visit: p.state.active });
+    const add = nodes(h.shared()).find((node) => node.type === "button" && content(node).includes("Add Behavior"));
+    assert(add && !add.props.disabled); add.props.onClick(); h.render();
+    h.section().onAddBehaviorFromLibrary(h.section().availableLib[0]); h.render();
+    assert.equal(h.section().behaviors.length, 1);
+  });
+
+  for (const count of [2, 3, 4, 6, 10]) {
+    test(`${workflow}: add behavior ${count} while tracking, without resetting measurements or timers`, async () => {
+      const existing = Array.from({ length: count - 1 }, (_, index) => ({
+        id: `synthetic-existing-${index}`, label: `Synthetic existing ${index}`, type: "frequency",
+        category: "challenging", custom: true, supportsDuration: true, supportsStudentCount: true,
+        count: 7, studentCount: 4, durationSec: 11, intensity: 2, note: "Synthetic note",
+        occurrences: [{ timestamp: 1000, intensity: 2 }],
+      }));
+      const h = trackingHarness(workflow, { visit: syntheticVisit(workflow, existing) });
+      const id = existing[0].id;
+      h.section().onRecordFrequency(id); h.render(); h.section().onChooseIntensity(3); h.render();
+      h.section().onToggleDuration(id); h.render(); h.tickDurations(2000);
+      assert.equal(h.section().durationTimers[id], 13);
+      const measurements = json(h.section().behaviors), timers = h.section().activeTimers;
+      h.section().onToggleAddBehavior(); h.render();
+      h.section().onAddBehaviorFromLibrary(h.section().availableLib[0]); h.render();
+      assert.equal(h.section().behaviors.length, count);
+      assert.deepEqual(json(h.section().behaviors).slice(0, count - 1), measurements);
+      assert.equal(h.section().activeTimers, timers);
+      assert.equal(timers.current[id], true);
+      assert.equal(h.section().showAddBehavior, true);
+      h.tickDurations(3000);
+      assert.equal(h.section().durationTimers[id], 16);
+      h.section().onToggleDuration(id); h.render();
+      assert.equal(h.section().pendingIntensity.occurrenceType, "duration");
+      h.section().setCustomBehavior({ label: "Synthetic after duration", type: "frequency", behaviorType: "positive" });
+      h.render(); h.section().onAddCustomBehavior(); h.render();
+      h.section().onChooseIntensity(4); h.render();
+      h.section().onRecordFrequency(h.section().behaviors.at(-1).id); h.render();
+      const completed = h.complete();
+      assert.equal(completed.behaviors[0].count, 8);
+      assert.equal(completed.behaviors[0].studentCount, 4);
+      assert.equal(completed.behaviors[0].durationSec, 16);
+      assert.equal(completed.behaviors[0].note, "Synthetic note");
+      assert.deepEqual(json(completed.behaviors[0].occurrences.map((record) => record.intensity)), [2, 3, 4]);
+      const p = persistenceHarness(h.api);
+      await p.completeVisit(completed); await p.fetchPersistedVisits();
+      const reopened = trackingHarness(workflow, { visit: p.state.data.visits[0], editing: true });
+      assert.deepEqual(json(reopened.section().behaviors), json(completed.behaviors));
+      assert.equal(reopened.section().durationTimers[id], 16);
+    });
+  }
+}
+
+function observationFieldset(saving, unconfirmed, visit, api) {
+  let element;
+  function find(node) {
+    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === "fieldset" &&
+      node.openingElement.attributes.getText(ast).includes("saveUnconfirmed")) element = node.getText(ast);
+    ts.forEachChild(node, find);
+  }
+  find(ast); assert(element);
+  return evaluate(`globalThis.fieldset = ${element};`, { ...api,
+    require: () => ({ jsx, jsxs, Fragment }), isSaving: saving, saveUnconfirmed: unconfirmed,
+    activeVisit: visit, editingVisitId: null, completeVisit() {},
+  }).fieldset;
+}
+
+for (const workflow of workflows) {
+  test(`${workflow}: rejected saves permit additions, unresolved saves keep the whole editor locked`, async () => {
+    const h = trackingHarness(workflow);
+    h.section().onAddBehaviorFromLibrary(h.section().availableLib[0]); h.render();
+    h.section().onRecordFrequency(h.section().behaviors[0].id); h.render(); h.section().onSkipIntensity(); h.render();
+    const completed = h.complete();
+    const p = persistenceHarness(h.api, { writes: [{ error: { code: "23514" }, status: 400, data: null }] });
+    p.state.active = completed;
+    await p.completeVisit(completed);
+    assert.equal(p.state.saving, false); assert.equal(p.state.unconfirmed, false);
+    assert.equal(observationFieldset(p.state.saving, p.state.unconfirmed, completed, h.api).props.disabled, false);
+    h.section().setCustomBehavior({ label: "Synthetic after rejection", type: "frequency", behaviorType: "positive" });
+    h.render(); h.section().onAddCustomBehavior(); h.render();
+    await p.completeVisit(h.complete()); await p.fetchPersistedVisits();
+    assert.equal(p.state.data.visits[0].behaviors.length, 2);
+    assert.equal(p.state.data.visits[0].behaviors[0].count, 1);
+    const uncertain = persistenceHarness(h.api, { writes: [new TypeError("Synthetic interrupted save")] });
+    const snapshot = h.complete(); uncertain.state.active = snapshot;
+    await uncertain.completeVisit(snapshot);
+    assert.equal(uncertain.state.unconfirmed, true);
+    assert.equal(observationFieldset(false, true, snapshot, h.api).props.disabled, true);
+    assert.equal(observationFieldset(true, false, snapshot, h.api).props.disabled, true);
+    assert.deepEqual(json(uncertain.context.pendingSnapshot.current.behaviors), json(snapshot.behaviors));
+    await uncertain.completeVisit(snapshot);
+    assert.equal(uncertain.requests.filter((request) => request.operation === "insert").length, 1);
+    assert.equal(uncertain.state.unconfirmed, true, "Unconfirmed saves cannot silently unlock editing");
+  });
+}
+
+test("FBA: adding during interval tracking preserves targets, records, and countdown", () => {
+  const h = intervalHarness(syntheticVisit("fba", intervalBehaviors()));
+  h.choose("synthetic-0"); h.record(true); h.choose("synthetic-1"); h.record(false);
+  const intervals = json(h.complete().fbaIntervalSessions);
+  const countdown = content(h.tree()).match(/Countdown: (\d+)s/)[1];
+  h.section().onToggleAddBehavior(); h.render();
+  h.section().onAddBehaviorFromLibrary(h.section().availableLib[0]); h.render();
+  h.section().setCustomBehavior({ label: "Synthetic interval addition", type: "duration", behaviorType: "positive" });
+  h.render(); h.section().onAddCustomBehavior(); h.render();
+  assert.equal(content(h.tree()).match(/Countdown: (\d+)s/)[1], countdown);
+  assert.deepEqual(json(h.complete().fbaIntervalSessions), intervals);
+  h.record(true);
+  assert.equal(h.complete().fbaIntervalSessions.find((session) => session.behaviorId === "synthetic-1").records.length, 2);
 });
