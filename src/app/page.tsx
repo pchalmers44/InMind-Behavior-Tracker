@@ -557,7 +557,10 @@ function BehaviorSetupSection({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.06em" }}>BEHAVIORS</div>
         <button
+          type="button"
           onClick={onToggleAddBehavior}
+          aria-expanded={showAddBehavior}
+          aria-controls="behavior-picker"
           style={{
             background: "#38bdf8",
             color: "#0f172a",
@@ -573,6 +576,165 @@ function BehaviorSetupSection({
         </button>
       </div>
 
+      {showAddBehavior && (
+        <div
+          id="behavior-picker"
+          style={{
+            background: "#0f172a",
+            borderRadius: 12,
+            padding: 16,
+            border: "1px solid #334155",
+            marginTop: 8,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 12 }}>BEHAVIOR LIBRARY</div>
+          {availableLib.length === 0 && <div style={{ color: "#475569", fontSize: 13, marginBottom: 16 }}>All library behaviors added.</div>}
+          {["positive", "challenging"].map((cat) => {
+            const catBehaviors = availableLib.filter((b) => b.category === cat);
+            if (catBehaviors.length === 0) return null;
+            return (
+              <div key={cat} style={{ marginBottom: 14 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: cat === "positive" ? "#4ade80" : "#f87171",
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {cat === "positive" ? "POSITIVE BEHAVIORS" : "CHALLENGING BEHAVIORS"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {catBehaviors.map((b) => (
+                    <button
+                      key={b.id}
+                      onClick={() => onAddBehaviorFromLibrary(b)}
+                      style={{
+                        background: cat === "positive" ? "#4ade8011" : "#f8717111",
+                        border: `1px solid ${cat === "positive" ? "#4ade8044" : "#f8717144"}`,
+                        borderRadius: 8,
+                        color: "#cbd5e1",
+                        padding: "5px 10px",
+                        fontSize: 12,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                      }}
+                    >
+                      {b.label}
+                      <span style={{ color: b.type === "frequency" ? "#818cf8" : "#34d399", fontSize: 10 }}>
+                        {b.type === "frequency" ? "F" : "D"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>CUSTOM BEHAVIOR</div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
+                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  color: "#e2e8f0",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="customBehaviorType"
+                  checked={customBehavior.behaviorType === "positive"}
+                  onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "positive" }))}
+                />
+                Positive
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
+                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  color: "#e2e8f0",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="customBehaviorType"
+                  checked={customBehavior.behaviorType === "challenging"}
+                  onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "challenging" }))}
+                />
+                Challenging
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                value={customBehavior.label}
+                onChange={(e) => setCustomBehavior((p) => ({ ...p, label: e.target.value }))}
+                placeholder="Behavior name..."
+                style={{
+                  flex: 1,
+                  minWidth: 160,
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  borderRadius: 8,
+                  color: "#e2e8f0",
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                }}
+              />
+              <select
+                value={customBehavior.type}
+                onChange={(e) => setCustomBehavior((p) => ({ ...p, type: e.target.value }))}
+                style={{
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  borderRadius: 8,
+                  color: "#e2e8f0",
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                }}
+              >
+                <option value="frequency">Frequency</option>
+                <option value="duration">Duration</option>
+              </select>
+              <button
+                onClick={onAddCustomBehavior}
+                style={{
+                  background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
+                  color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 16px",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+                disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {behaviors.length === 0 && (
         <div
           style={{
@@ -1181,163 +1343,6 @@ function BehaviorSetupSection({
         </div>
       )}
 
-      {showAddBehavior && (
-        <div
-          style={{
-            background: "#0f172a",
-            borderRadius: 12,
-            padding: 16,
-            border: "1px solid #334155",
-            marginTop: 8,
-          }}
-        >
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 12 }}>BEHAVIOR LIBRARY</div>
-          {availableLib.length === 0 && <div style={{ color: "#475569", fontSize: 13, marginBottom: 16 }}>All library behaviors added.</div>}
-          {["positive", "challenging"].map((cat) => {
-            const catBehaviors = availableLib.filter((b) => b.category === cat);
-            if (catBehaviors.length === 0) return null;
-            return (
-              <div key={cat} style={{ marginBottom: 14 }}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    marginBottom: 6,
-                    color: cat === "positive" ? "#4ade80" : "#f87171",
-                    letterSpacing: "0.06em",
-                  }}
-                >
-                  {cat === "positive" ? "POSITIVE BEHAVIORS" : "CHALLENGING BEHAVIORS"}
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {catBehaviors.map((b) => (
-                    <button
-                      key={b.id}
-                      onClick={() => onAddBehaviorFromLibrary(b)}
-                      style={{
-                        background: cat === "positive" ? "#4ade8011" : "#f8717111",
-                        border: `1px solid ${cat === "positive" ? "#4ade8044" : "#f8717144"}`,
-                        borderRadius: 8,
-                        color: "#cbd5e1",
-                        padding: "5px 10px",
-                        fontSize: 12,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                      }}
-                    >
-                      {b.label}
-                      <span style={{ color: b.type === "frequency" ? "#818cf8" : "#34d399", fontSize: 10 }}>
-                        {b.type === "frequency" ? "F" : "D"}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          <div style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 8 }}>CUSTOM BEHAVIOR</div>
-            <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: `1px solid ${customBehavior.behaviorType === "positive" ? "#4ade8055" : "#334155"}`,
-                  background: customBehavior.behaviorType === "positive" ? "#4ade8011" : "transparent",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  color: "#e2e8f0",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="customBehaviorType"
-                  checked={customBehavior.behaviorType === "positive"}
-                  onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "positive" }))}
-                />
-                Positive
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: `1px solid ${customBehavior.behaviorType === "challenging" ? "#f8717155" : "#334155"}`,
-                  background: customBehavior.behaviorType === "challenging" ? "#f8717111" : "transparent",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  color: "#e2e8f0",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="customBehaviorType"
-                  checked={customBehavior.behaviorType === "challenging"}
-                  onChange={() => setCustomBehavior((p) => ({ ...p, behaviorType: "challenging" }))}
-                />
-                Challenging
-              </label>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <input
-                value={customBehavior.label}
-                onChange={(e) => setCustomBehavior((p) => ({ ...p, label: e.target.value }))}
-                placeholder="Behavior name..."
-                style={{
-                  flex: 1,
-                  minWidth: 160,
-                  background: "#1e293b",
-                  border: "1px solid #334155",
-                  borderRadius: 8,
-                  color: "#e2e8f0",
-                  padding: "8px 12px",
-                  fontSize: 13,
-                  fontFamily: "inherit",
-                }}
-              />
-              <select
-                value={customBehavior.type}
-                onChange={(e) => setCustomBehavior((p) => ({ ...p, type: e.target.value }))}
-                style={{
-                  background: "#1e293b",
-                  border: "1px solid #334155",
-                  borderRadius: 8,
-                  color: "#e2e8f0",
-                  padding: "8px 12px",
-                  fontSize: 13,
-                  fontFamily: "inherit",
-                }}
-              >
-                <option value="frequency">Frequency</option>
-                <option value="duration">Duration</option>
-              </select>
-              <button
-                onClick={onAddCustomBehavior}
-                style={{
-                  background: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#1e293b" : "#38bdf8",
-                  color: (!customBehavior.label.trim() || !customBehavior.behaviorType) ? "#475569" : "#0f172a",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "8px 16px",
-                  fontWeight: 800,
-                  fontSize: 13,
-                  cursor: "pointer",
-                }}
-                disabled={!customBehavior.label.trim() || !customBehavior.behaviorType}
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1355,7 +1360,10 @@ function resetBehaviorForNewVisit(behavior: Behavior): Behavior {
     count: 0,
     intensity: null,
     occurrences: [],
-    durationSec: undefined,
+    intensityRecords: [],
+    durationSec: 0,
+    studentCount: 0,
+    note: "",
   };
 }
 
@@ -1980,11 +1988,13 @@ function ActiveFbaVisit({
     firstIntervalSession?.intervalLengthSec || visit.intervalLengthSec || 10
   );
   const [intervalRecords, setIntervalRecords] = useState<boolean[]>(
-    firstIntervalSession?.records?.length
-      ? firstIntervalSession.records.map((record) => record.behaviorPresent)
+    firstIntervalSession
+      ? (firstIntervalSession.records || []).map((record) => record.behaviorPresent)
       : visit.intervalRecords || []
   );
-  const [fbaIntervalSessions] = useState<FbaIntervalSession[]>(visit.fbaIntervalSessions || []);
+  const [fbaIntervalSessions, setFbaIntervalSessions] = useState<FbaIntervalSession[]>(visit.fbaIntervalSessions || []);
+  const [activeIntervalSessionIndex, setActiveIntervalSessionIndex] = useState<number | null>(firstIntervalSession ? 0 : null);
+  const [intervalStartedAt, setIntervalStartedAt] = useState(firstIntervalSession?.startedAt ?? visit.startTime);
   const [intervalRecordEvents, setIntervalRecordEvents] = useState<FbaIntervalRecord[]>(() => firstIntervalSession?.records || []);
   const [intervalRunning, setIntervalRunning] = useState(false);
   const [intervalCountdown, setIntervalCountdown] = useState(intervalLengthSec);
@@ -2072,7 +2082,7 @@ function ActiveFbaVisit({
       return next;
     });
     if (selectedLatencyBehaviorId === bid) setSelectedLatencyBehaviorId("");
-    if (selectedIntervalBehaviorId === bid) setSelectedIntervalBehaviorId("");
+    if (selectedIntervalBehaviorId === bid) switchIntervalTarget("");
     if (pendingIntensity?.behaviorId === bid) setPendingIntensity(null);
   };
 
@@ -2201,6 +2211,48 @@ function ActiveFbaVisit({
     setLatencyStartMeta(null);
   };
 
+  // Replace the active draft in place; switching and saving must never append it twice.
+  const snapshotIntervalSessions = (): FbaIntervalSession[] => {
+    if (intervalRecords.length === 0 && activeIntervalSessionIndex === null) return fbaIntervalSessions;
+    const currentSession: FbaIntervalSession = {
+      behaviorId: !selectedIntervalBehaviorId || selectedIntervalBehaviorId === "__other__" ? null : selectedIntervalBehaviorId,
+      behaviorLabel: selectedIntervalBehaviorId === "__other__"
+        ? intervalOtherBehaviorLabel.trim()
+        : behaviors.find((b) => b.id === selectedIntervalBehaviorId)?.label ||
+          (activeIntervalSessionIndex !== null ? fbaIntervalSessions[activeIntervalSessionIndex]?.behaviorLabel : null) ||
+          "Unspecified behavior",
+      intervalLengthSec: Math.max(1, Math.floor(intervalLengthSec || 10)),
+      records: intervalRecordEvents.length > 0
+        ? intervalRecordEvents
+        : intervalRecords.map((value, index) => ({ intervalNumber: index + 1, behaviorPresent: value, timestamp: intervalStartedAt })),
+      startedAt: intervalStartedAt,
+    };
+    return activeIntervalSessionIndex === null
+      ? [...fbaIntervalSessions, currentSession]
+      : fbaIntervalSessions.map((session, index) => index === activeIntervalSessionIndex ? currentSession : session);
+  };
+
+  const switchIntervalTarget = (nextId: string, nextOtherLabel = "", nextLength = intervalLengthSec) => {
+    const sessions = snapshotIntervalSessions();
+    const length = Math.max(1, Math.floor(nextLength || 10));
+    const index = nextId ? sessions.findIndex((session) =>
+      session.intervalLengthSec === length && (nextId === "__other__"
+        ? session.behaviorId === null && session.behaviorLabel === nextOtherLabel.trim()
+        : session.behaviorId === nextId)
+    ) : -1;
+    const session = index >= 0 ? sessions[index] : null;
+    setFbaIntervalSessions(sessions);
+    setActiveIntervalSessionIndex(session ? index : null);
+    setSelectedIntervalBehaviorId(nextId);
+    setIntervalOtherBehaviorLabel(nextId === "__other__" ? nextOtherLabel : "");
+    setIntervalLengthSec(length);
+    setIntervalRecords(session ? session.records.map((record) => record.behaviorPresent) : []);
+    setIntervalRecordEvents(session?.records || []);
+    setIntervalStartedAt(session?.startedAt ?? Date.now());
+    setIntervalRunning(false);
+    setIntervalCountdown(length);
+  };
+
   const startIntervals = () => {
     if (!selectedIntervalBehaviorId) return;
     if (selectedIntervalBehaviorId === "__other__" && !intervalOtherBehaviorLabel.trim()) return;
@@ -2235,24 +2287,7 @@ function ActiveFbaVisit({
         : undefined,
     }));
 
-    const intervalSessionsNext = (() => {
-      if (!selectedIntervalBehaviorId || intervalRecords.length === 0) return fbaIntervalSessions;
-      const behaviorId = selectedIntervalBehaviorId === "__other__" ? null : selectedIntervalBehaviorId;
-      const behaviorLabel =
-        selectedIntervalBehaviorId === "__other__"
-          ? intervalOtherBehaviorLabel.trim()
-          : behaviors.find((x) => x.id === selectedIntervalBehaviorId)?.label || "Unknown";
-      const currentSession = {
-        behaviorId,
-        behaviorLabel,
-        intervalLengthSec: Math.max(1, Math.floor(intervalLengthSec || 10)),
-        records: intervalRecordEvents.length > 0
-          ? intervalRecordEvents
-          : intervalRecords.map((v, i) => ({ intervalNumber: i + 1, behaviorPresent: v, timestamp: Date.now() })),
-        startedAt: firstIntervalSession?.startedAt ?? visit.startTime,
-      };
-      return isEditing && firstIntervalSession ? [currentSession, ...fbaIntervalSessions.slice(1)] : [...fbaIntervalSessions, currentSession];
-    })();
+    const intervalSessionsNext = snapshotIntervalSessions();
 
     onComplete({
       ...visit,
@@ -2261,7 +2296,7 @@ function ActiveFbaVisit({
       latencyRecords,
       fbaLatencyEvents,
       intervalLengthSec,
-      intervalRecords,
+      intervalRecords: intervalSessionsNext.flatMap((session) => session.records.map((record) => record.behaviorPresent)),
       fbaIntervalSessions: intervalSessionsNext,
       notes,
       recommendations,
@@ -2623,15 +2658,7 @@ function ActiveFbaVisit({
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
           <select
             value={selectedIntervalBehaviorId}
-            onChange={(e) => {
-              const next = e.target.value;
-              setSelectedIntervalBehaviorId(next);
-              setIntervalRecords([]);
-              setIntervalRecordEvents([]);
-              setIntervalRunning(false);
-              setIntervalCountdown(Math.max(1, Math.floor(intervalLengthSec || 10)));
-              if (next !== "__other__") setIntervalOtherBehaviorLabel("");
-            }}
+            onChange={(e) => switchIntervalTarget(e.target.value)}
             style={{
               flex: 1,
               minWidth: 220,
@@ -2655,7 +2682,7 @@ function ActiveFbaVisit({
           {selectedIntervalBehaviorId === "__other__" && (
             <input
               value={intervalOtherBehaviorLabel}
-              onChange={(e) => setIntervalOtherBehaviorLabel(e.target.value)}
+              onChange={(e) => switchIntervalTarget("__other__", e.target.value)}
               placeholder="Enter behavior..."
               style={{
                 flex: 1,
@@ -2681,8 +2708,11 @@ function ActiveFbaVisit({
               value={intervalLengthSec}
               onChange={(e) => {
                 const n = Math.max(1, parseInt(e.target.value || "10", 10));
-                setIntervalLengthSec(n);
-                if (!intervalRunning) setIntervalCountdown(n);
+                switchIntervalTarget(selectedIntervalBehaviorId, intervalOtherBehaviorLabel, n);
+                if (intervalRunning) {
+                  setIntervalRunning(true);
+                  setIntervalCountdown(intervalCountdown);
+                }
               }}
               style={{
                 width: 140, background: "#0f172a", border: "1px solid #334155", borderRadius: 10,
@@ -4057,7 +4087,10 @@ function PageInner() {
 
     // Find previous visits for this subject
     const prevVisits = (data?.visits || []).filter(v =>
-      safeSubjectName(v.subjectName).toLowerCase() === newVisitForm.subjectName.toLowerCase() && v.type === newVisitForm.type
+      safeSubjectName(v.subjectName).trim().toLowerCase() === newVisitForm.subjectName.trim().toLowerCase() &&
+      v.type === newVisitForm.type &&
+      (v.district || "").trim().toLowerCase() === districtValue.trim().toLowerCase() &&
+      (v.schoolName || "").trim().toLowerCase() === newVisitForm.schoolName.trim().toLowerCase()
     ).sort((a, b) => b.startTime - a.startTime);
 
     const prevBehaviors =
@@ -4066,8 +4099,14 @@ function PageInner() {
         : prevVisits.length > 0
           ? (() => {
             const allowedBehaviorIds = new Set(BEHAVIOR_LIBRARY[newVisitForm.type].map(b => b.id));
-            return (prevVisits[0].behaviors || [])
-              .filter(b => allowedBehaviorIds.has(b.id))
+            const seen = new Set<string>();
+            return normalizeBehaviorList(prevVisits[0].behaviors)
+              .filter((b) => {
+                if (typeof b.id !== "string" || !b.id.trim() || seen.has(b.id)) return false;
+                if (!allowedBehaviorIds.has(b.id) && b.custom !== true) return false;
+                seen.add(b.id);
+                return true;
+              })
               .map((b) => resetBehaviorForNewVisit(b));
           })()
           : [];
