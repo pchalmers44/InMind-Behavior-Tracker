@@ -8,12 +8,14 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import { passwordRecovery, supabase } from "@/lib/supabase";
+import type { RecoverySnapshot } from "@/lib/password-recovery";
 import { invalidSession, logDiagnostic, withDeadline } from "@/lib/reliability";
 
 type AuthContextValue = {
@@ -21,6 +23,8 @@ type AuthContextValue = {
   session: Session | null;
   user: User | null;
   logout: () => Promise<void>;
+  recovery: RecoverySnapshot;
+  retryVerification: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -247,6 +251,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const isLoginPage = pathname === "/login";
+  const recoveryState = useSyncExternalStore(passwordRecovery.subscribe,
+    passwordRecovery.getSnapshot, passwordRecovery.getServerSnapshot);
+  const isRecoveryPage = pathname === "/change-password" && recoveryState.status !== "idle";
   const [isLoading, setIsLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -269,7 +276,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setIsLoading(false);
       setAuthError("");
-      if (!isLoginPage) router.replace("/login");
+      if (!isLoginPage && !passwordRecovery.isAttempt()) router.replace("/login");
     };
 
     const verify = async (ticket: number, candidate?: Session | null) => {
@@ -355,7 +362,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [session]);
 
-  const accessReady = Boolean(session && user && !sessionExpired);
+  useEffect(() => {
+    if (!isRecoveryPage && (recoveryState.status === "ready" ||
+        (!isLoginPage && recoveryState.status === "invalid"))) {
+      router.replace("/change-password?recovery=1");
+    }
+  }, [isLoginPage, isRecoveryPage, recoveryState.status, router]);
+
+  const retryVerification = useCallback(() => setRetryKey((key) => key + 1), []);
+  const accessReady = Boolean(session && user && !sessionExpired && recoveryState.status !== "complete");
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
@@ -369,24 +384,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session: accessReady ? session : null,
       user: accessReady ? user : null,
       logout,
+      recovery: recoveryState,
+      retryVerification,
     }),
-    [accessReady, isLoading, logout, session, user]
+    [accessReady, isLoading, logout, session, user, recoveryState, retryVerification]
   );
 
   const recovery = (
     <div role="status" style={{ padding: 20, background: "#0f172a", color: "#e2e8f0" }}>
       <p>{authError || "Verifying your session..."}</p>
-      <button type="button" onClick={() => setRetryKey((key) => key + 1)}>Retry session verification</button>
+      <button type="button" onClick={retryVerification}>Retry session verification</button>
     </div>
   );
 
   return (
     <AuthContext.Provider value={value}>
-      {((!isLoginPage && !accessReady) || authError) ? recovery : null}
+      {((!isLoginPage && !isRecoveryPage && !accessReady) || authError) ? recovery : null}
       {!isLoginPage && accessReady && session?.user?.email ? (
         <AuthOverlay email={session.user.email} onLogout={logout} />
       ) : null}
-      {isLoginPage ? children : user ? (
+      {isLoginPage || isRecoveryPage ? children : user ? (
         // Keep verified editors mounted while access is blocked during transient recovery.
         <div hidden={!accessReady} inert={!accessReady}>{children}</div>
       ) : null}

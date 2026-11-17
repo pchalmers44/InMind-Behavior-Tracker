@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { passwordRecovery, supabase } from "@/lib/supabase";
+import { recoveryRedirect } from "@/lib/password-recovery";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { logDiagnostic, withDeadline } from "@/lib/reliability";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, session } = useAuth();
+  const { user, session, recovery } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -18,10 +19,11 @@ export default function LoginPage() {
   const [isResetting, setIsResetting] = useState(false);
   const isSubmittingRef = useRef(false);
   const isRecoveryRef = useRef(false);
+  const isResettingRef = useRef(false);
 
   useEffect(() => {
-    if (user && session && !isRecoveryRef.current) router.replace("/");
-  }, [router, session, user]);
+    if (user && session && !isRecoveryRef.current && recovery.status === "idle") router.replace("/");
+  }, [router, session, user, recovery.status]);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
@@ -42,7 +44,10 @@ export default function LoginPage() {
     setMessage("");
 
     try {
-      await withDeadline(supabase.auth.signOut({ scope: "local" }));
+      const signedOut = await withDeadline(supabase.auth.signOut({ scope: "local" }));
+      if (signedOut.error) throw signedOut.error;
+      passwordRecovery.reset();
+      isRecoveryRef.current = false;
 
       const { data, error: signInError } = await withDeadline(supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -77,6 +82,7 @@ export default function LoginPage() {
   };
 
   const handleForgotPassword = async () => {
+    if (isResettingRef.current) return;
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
       setError("Enter your email first so we can send a reset link.");
@@ -84,25 +90,31 @@ export default function LoginPage() {
       return;
     }
 
+    isResettingRef.current = true;
     setIsResetting(true);
     setError("");
     setMessage("");
 
-    const origin =
-      typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL ?? "";
-
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-      redirectTo: origin ? `${origin}/change-password?recovery=1` : undefined,
-    });
-
-    if (resetError) {
-      setError(resetError.message);
+    try {
+      const origin = window.location.origin;
+      const { error: resetError } = await withDeadline(supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: recoveryRedirect(origin),
+      }));
+      if (resetError) {
+        logDiagnostic("password-reset-request", resetError);
+        setError(resetError.status === 429
+          ? "Please wait a minute before requesting another recovery email."
+          : "The recovery request could not be completed. Check your connection and try again, or contact support.");
+        return;
+      }
+      setMessage("If an account exists for this email, you should receive a recovery link. Check your inbox and spam folder. Delivery may take a few minutes.");
+    } catch (failure) {
+      logDiagnostic("password-reset-request", failure);
+      setError("The recovery request could not be confirmed. Check your inbox before requesting another link, and check your connection.");
+    } finally {
+      isResettingRef.current = false;
       setIsResetting(false);
-      return;
     }
-
-    setMessage("Password reset email sent. Check your inbox for the recovery link.");
-    setIsResetting(false);
   };
 
   return (
@@ -137,6 +149,8 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {recovery.status === "complete" && <p role="status">Password updated. Sign in with your new password.</p>}
+        {recovery.status === "invalid" && <p role="status">The recovery link could not be verified. Request a new link using Forgot Password.</p>}
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 14 }}>
             <label

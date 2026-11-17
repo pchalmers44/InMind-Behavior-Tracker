@@ -34,3 +34,28 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Password recovery configuration
+
+The production origin is `https://inmindobservation.com`. In Supabase Authentication URL Configuration,
+verify the Site URL and allow this exact recovery redirect:
+
+`https://inmindobservation.com/change-password?recovery=1`
+
+The application requests a callback on its current browser origin. Allow localhost or specific
+Vercel preview callbacks separately if those environments need recovery testing.
+
+Keep the default implicit recovery flow and an email template using Supabase's verification
+link (`{{ .ConfirmationURL }}`) that preserves the requested redirect. Custom token-hash/PKCE callback
+templates need a matching application flow and are not configured here. Verify custom SMTP,
+delivery/rate limits, link expiry, password policies, and any CAPTCHA requirements in the dashboard.
+No dashboard settings are managed by this repository.
+
+Recovery authorization is held in memory for the verified recovery session. If the recovery form
+is reloaded after the SDK removes the token fragment, request a new recovery link rather than
+treating a previously signed-in session as recovery authorization. Password-update timeouts have
+an uncertain outcome: try signing in with the new password before requesting another link.
+
+Run the synthetic regression suites with:
+
+`node --test tests/reliability.test.mjs tests/password-recovery.test.mjs`

@@ -311,6 +311,7 @@ function authHarness(getUser) {
   let listener;
   const context = evaluate("globalThis.effect = " + effect.getText(ast), {
     ...helpers, verified: { current: null }, isLoginPage: false,
+    passwordRecovery: { isAttempt: () => false },
     router: { replace: (path) => state.redirects.push(path) },
     setSession: (value) => { state.session = value; },
     setUser: (value) => { state.user = value; },

@@ -1,31 +1,40 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
-import { supabase } from "@/lib/supabase";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useRef, useState, type FormEvent } from "react";
+import { passwordRecovery, passwordUpdates, supabase } from "@/lib/supabase";
+import { logDiagnostic, withDeadline } from "@/lib/reliability";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 export default function ChangePasswordPage() {
-  const { user } = useAuth();
+  const { user, session, recovery, retryVerification } = useAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const isRecovery = searchParams.get("recovery") === "1";
+  const wantsRecovery = searchParams.get("recovery") === "1" || recovery.status !== "idle";
+  const isRecovery = wantsRecovery && passwordRecovery.isAuthorized(session) && user?.id === recovery.userId;
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitting = useRef(false);
+  const [completed, setCompleted] = useState(false);
 
   const email = user?.email ?? "";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submitting.current) return;
     setError("");
     setMessage("");
-
-    if (!email) {
-      setError("No authenticated user email was found.");
+    if (wantsRecovery && !isRecovery) {
+      setError("This recovery link is not verified. Request a new link from Forgot Password.");
+      return;
+    }
+    if (!email || !user || !session) {
+      setError("Verify your session before changing your password.");
       return;
     }
     if ((!isRecovery && !currentPassword) || !newPassword || !confirmPassword) {
@@ -40,38 +49,78 @@ export default function ChangePasswordPage() {
       setError("Choose a new password that is different from your current password.");
       return;
     }
-
+    submitting.current = true;
     setIsSubmitting(true);
-
-    if (!isRecovery) {
-      const { error: currentPasswordError } = await supabase.auth.signInWithPassword({
-        email,
-        password: currentPassword,
-      });
-
-      if (currentPasswordError) {
-        setError(currentPasswordError.message);
-        setIsSubmitting(false);
+    let changed = false;
+    try {
+      const intendedUserId = user.id;
+      if (!isRecovery) {
+        const signedIn = await withDeadline(supabase.auth.signInWithPassword({ email, password: currentPassword }));
+        if (signedIn.error) {
+          setError("The current password could not be verified. Check it and try again.");
+          return;
+        }
+        if (signedIn.data.user?.id !== intendedUserId) throw new Error("Account changed during verification");
+      }
+      const current = await withDeadline(supabase.auth.getSession());
+      if (current.error) throw current.error;
+      const currentSession = current.data.session;
+      if (!currentSession || currentSession.user.id !== intendedUserId ||
+          (isRecovery && !passwordRecovery.isAuthorized(currentSession))) {
+        throw Object.assign(new Error("Session changed"), { name: "PasswordSessionError" });
+      }
+      const verified = await withDeadline(supabase.auth.getUser(currentSession.access_token));
+      if (verified.error) throw verified.error;
+      if (verified.data.user?.id !== intendedUserId) throw new Error("Account verification failed");
+      const result = await passwordUpdates.run(currentSession, () => supabase.auth.updateUser({ password: newPassword }));
+      if (result.error) {
+        logDiagnostic("password-update", result.error);
+        setError(["weak_password", "same_password"].includes(result.error.code || "")
+          ? result.error.message
+          : result.error.status === 429 ? "Please wait before trying another password update."
+          : "The password could not be updated. Check your session, try again, or request a new recovery link.");
         return;
       }
-    }
-
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
-    if (updateError) {
-      setError(updateError.message);
+      if (result.data.user?.id !== intendedUserId) throw new Error("Password update could not be confirmed");
+      changed = true;
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setMessage("Password updated successfully.");
+      if (isRecovery) {
+        setCompleted(true);
+        passwordRecovery.finish();
+        try {
+          const signedOut = await withDeadline(supabase.auth.signOut({ scope: "local" }));
+          if (signedOut.error) throw signedOut.error;
+        } catch (failure) {
+          logDiagnostic("password-recovery-signout", failure);
+        }
+        router.replace("/login");
+      }
+    } catch (failure) {
+      logDiagnostic("password-update", failure);
+      setError(changed ? "Your password was updated. Continue to Sign In."
+        : failure instanceof Error && failure.name === "PasswordSessionError"
+          ? "Your session changed. Sign in again or request a new recovery link before updating your password."
+          : "The password update could not be confirmed. Check your connection. Try signing in with your new password before requesting another recovery link.");
+    } finally {
+      submitting.current = false;
       setIsSubmitting(false);
-      return;
     }
-
-    setMessage("Password updated successfully.");
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
-    setIsSubmitting(false);
   };
+
+  if (completed || recovery.status === "complete") {
+    return <main style={{ padding: 32 }}><p role="status">Password updated successfully. Sign in with your new password.</p><Link href="/login">Continue to Sign In</Link></main>;
+  }
+  if (wantsRecovery && !isRecovery) {
+    const verifying = recovery.status === "pending" || recovery.status === "ready";
+    return <main style={{ padding: 32 }}><p role="status">{verifying
+      ? "Verifying your recovery session. If this does not complete, retry verification or request a new link."
+      : "This recovery link is expired, invalid, or could not be verified. Request a new link using Forgot Password."}</p>
+      {verifying && <button type="button" onClick={retryVerification}>Retry session verification</button>}
+      <p><Link href="/login">Request a new recovery link or sign in</Link></p></main>;
+  }
 
   return (
     <main
@@ -106,6 +155,7 @@ export default function ChangePasswordPage() {
         </div>
 
         <form onSubmit={handleSubmit}>
+          <fieldset disabled={isSubmitting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           {!isRecovery ? (
             <div style={{ marginBottom: 14 }}>
               <label
@@ -260,6 +310,7 @@ export default function ChangePasswordPage() {
               Back to app
             </Link>
           </div>
+          </fieldset>
         </form>
       </div>
     </main>
