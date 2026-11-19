@@ -115,7 +115,7 @@ type Visit = {
   implementationStatus?: string;
   implementationNotes?: string;
   updatedAt?: string | number | null;
-  prevVisit?: Visit | null;
+  previousFeedback?: { recommendations: string; observedAt: number };
   [key: string]: any;
 };
 
@@ -1352,7 +1352,14 @@ function normalizeBehaviorList(behaviors: Behavior[] | undefined | null) {
 
 function resetBehaviorForNewVisit(behavior: Behavior): Behavior {
   return {
-    ...behavior,
+    id: behavior.id,
+    label: behavior.label,
+    type: behavior.type,
+    category: behavior.category,
+    custom: behavior.custom,
+    measureType: behavior.measureType,
+    supportsStudentCount: behavior.supportsStudentCount,
+    supportsDuration: behavior.supportsDuration,
     count: 0,
     intensity: null,
     occurrences: [],
@@ -1566,16 +1573,15 @@ function SearchableSelect({
 function ActiveVisit({
   visit,
   onComplete,
-  prevVisit,
   isEditing = false,
   isSaving = false,
 }: {
   visit: Visit;
   onComplete: (completed: Visit) => void;
-  prevVisit?: Visit | null;
   isEditing?: boolean;
   isSaving?: boolean;
 }) {
+  const { previousFeedback } = visit;
   const [totalStudents, setTotalStudents] = useState<number | null>(() =>
     visit.type === "classroom" ? Math.max(1, Math.floor(visit.totalStudents || 1)) : null
   );
@@ -1832,19 +1838,19 @@ function ActiveVisit({
       )}
 
       {/* Implementation follow-up */}
-      {(prevVisit?.recommendations || isEditing || visit.implementationStatus) && (
+      {(previousFeedback || isEditing || visit.implementationStatus) && (
         <div style={{
           background: "#1e293b", borderRadius: 12, padding: 16, marginBottom: 16,
           border: "1px solid #f59e0b55"
         }}>
           <div style={{ fontSize: 12, color: "#f59e0b", fontWeight: 700, marginBottom: 8 }}>
-            {prevVisit?.recommendations
-              ? `FOLLOW-UP: Recommendations from ${dateStr(prevVisit.endTime || prevVisit.startTime)}`
+            {previousFeedback
+              ? `FOLLOW-UP: Recommendations from ${dateStr(previousFeedback.observedAt)}`
               : "IMPLEMENTATION FOLLOW-UP"}
           </div>
-          {prevVisit?.recommendations && (
+          {previousFeedback && (
             <div style={{ fontSize: 13, color: "#cbd5e1", marginBottom: 12, fontStyle: "italic" }}>
-              &quot;{prevVisit.recommendations}&quot;
+              &quot;{previousFeedback.recommendations}&quot;
             </div>
           )}
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Were these recommendations implemented?</div>
@@ -4081,22 +4087,21 @@ function PageInner() {
     if (newVisitForm.selectedDistrict === "Other" && !districtValue) return;
     if (!newVisitForm.schoolName.trim()) return;
 
-    // Find previous visits for this subject
-    const prevVisits = (data?.visits || []).filter(v =>
+    const previousVisit = data.visits.filter(v =>
       safeSubjectName(v.subjectName).trim().toLowerCase() === newVisitForm.subjectName.trim().toLowerCase() &&
       v.type === newVisitForm.type &&
       (v.district || "").trim().toLowerCase() === districtValue.trim().toLowerCase() &&
       (v.schoolName || "").trim().toLowerCase() === newVisitForm.schoolName.trim().toLowerCase()
-    ).sort((a, b) => b.startTime - a.startTime);
+    ).sort((a, b) => b.startTime - a.startTime)[0];
 
     const prevBehaviors =
       newVisitForm.type === "fba"
         ? []
-        : prevVisits.length > 0
+        : previousVisit
           ? (() => {
             const allowedBehaviorIds = new Set(BEHAVIOR_LIBRARY[newVisitForm.type].map(b => b.id));
             const seen = new Set<string>();
-            return normalizeBehaviorList(prevVisits[0].behaviors)
+            return normalizeBehaviorList(previousVisit.behaviors)
               .filter((b) => {
                 if (typeof b.id !== "string" || !b.id.trim() || seen.has(b.id)) return false;
                 if (!allowedBehaviorIds.has(b.id) && b.custom !== true) return false;
@@ -4118,10 +4123,18 @@ function PageInner() {
       totalStudents: newVisitForm.type === "classroom" ? (parseInt(newVisitForm.totalStudents) || null) : null,
       startTime: Date.now(),
       behaviors: prevBehaviors,
+      notes: "",
+      recommendations: "",
+      implementationNotes: "",
       isFirstVisit: selectedFirstVisit,
       implementationStatus: newVisitForm.type !== "fba" && selectedFirstVisit === false ? implementationStatus : undefined,
-      prevVisit: prevVisits[0] || null
-    } as any;
+      previousFeedback: newVisitForm.type !== "fba" && previousVisit?.recommendations
+        ? {
+            recommendations: previousVisit.recommendations,
+            observedAt: previousVisit.endTime || previousVisit.startTime,
+          }
+        : undefined,
+    };
     setEditingVisitId(null);
     setActiveVisit(visit);
     setScreen("active");
@@ -4131,7 +4144,7 @@ function PageInner() {
     setSaveToast(null);
     setSelectedVisit(null);
     setEditingVisitId(visit.id);
-    setActiveVisit({ ...visit, prevVisit: null });
+    setActiveVisit({ ...visit, previousFeedback: undefined });
     setScreen("active");
   };
 
@@ -4387,13 +4400,12 @@ function PageInner() {
         {screen === "active" && activeVisit && (
           <>
           {saveUnconfirmed && <p role="status">Save outcome unconfirmed. Your submitted observation is preserved. Use Check save status to verify it.</p>}
-          <fieldset disabled={isSaving || saveUnconfirmed} aria-busy={isSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          <fieldset key={activeVisit.id} disabled={isSaving || saveUnconfirmed} aria-busy={isSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           {activeVisit.type === "fba" ? (
             <ActiveFbaVisit visit={activeVisit} onComplete={completeVisit} isEditing={editingVisitId === activeVisit.id} isSaving={isSaving} />
           ) : (
             <ActiveVisit
               visit={activeVisit}
-              prevVisit={activeVisit.prevVisit}
               onComplete={completeVisit}
               isEditing={editingVisitId === activeVisit.id}
               isSaving={isSaving}

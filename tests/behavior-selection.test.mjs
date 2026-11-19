@@ -42,7 +42,7 @@ function evaluate(source, globals = {}) {
 const intensity = evaluate(fs.readFileSync("src/lib/behavior-intensity.ts", "utf8")).exports;
 const reliability = evaluate(fs.readFileSync("src/lib/reliability.ts", "utf8")).exports;
 const componentSource = [declaration("BEHAVIOR_LIBRARY"), declaration("INTENSITY_LEVELS"),
-  ...["uid", "fmtTime", "fmtDuration", "calcRate", "Badge", "IntensityPicker", "normalizeBehaviorList",
+  ...["uid", "fmtTime", "fmtDuration", "dateStr", "calcRate", "Badge", "IntensityPicker", "normalizeBehaviorList",
     "resetBehaviorForNewVisit", "appendBehaviorOccurrence", "setBehaviorOccurrenceIntensity",
     "useBehaviorDurationTimer", "BehaviorSetupSection", "ActiveVisit", "ActiveFbaVisit"].map(functionSource),
   "globalThis.api = { BEHAVIOR_LIBRARY, normalizeBehaviorList, resetBehaviorForNewVisit, BehaviorSetupSection, ActiveVisit, ActiveFbaVisit };",
@@ -56,6 +56,11 @@ function content(tree) {
   if (Array.isArray(tree)) return tree.map(content).join("");
   return tree && typeof tree === "object" ? content(tree.props?.children)
     : tree == null || tree === false ? "" : String(tree);
+}
+function textareaValue(tree, placeholder) {
+  const field = nodes(tree).find((node) => node.type === "textarea" && node.props.placeholder === placeholder);
+  assert(field, `Expected textarea with placeholder "${placeholder}"`);
+  return field.props.value;
 }
 const workflows = ["student", "classroom", "rhs9", "fba"];
 function syntheticVisit(workflow, behaviors = []) {
@@ -251,7 +256,7 @@ for (const workflow of workflows) {
       });
     }
   }
-  test(`${workflow}: subsequent observations preserve eligible configurations and reset measurements`, async () => {
+  test(`${workflow}: subsequent observations start with fresh notes and measurements, and saved edits restore them`, async () => {
     const h = trackingHarness(workflow), p = persistenceHarness(h.api);
     const type = workflow === "rhs9" ? "classroom" : workflow;
     const library = h.api.BEHAVIOR_LIBRARY[type === "fba" ? "student" : type];
@@ -260,19 +265,45 @@ for (const workflow of workflows) {
       id: `synthetic-custom-${index}`, label: `Synthetic ${index}`, custom: true,
       type: index % 2 ? "duration" : "frequency", category: index % 2 ? "challenging" : "positive",
       supportsDuration: true, supportsStudentCount: true, measureType: "student-count",
-    }))].map((item) => ({ ...item, count: 5, studentCount: 9, durationSec: 30, intensity: 4,
-      occurrences: [{ timestamp: 1000, intensity: 4 }], intensityRecords: [{ timestamp: 1000, intensity: 4 }], note: "Synthetic previous note" }));
-    const previous = syntheticVisit(workflow, behaviors);
+    }))].map((item) => ({ ...item, count: 5, studentCount: 9, durationSec: item.supportsDuration ? 30 : undefined, intensity: 4,
+      occurrences: [{ timestamp: 1000, intensity: 4 }], intensityRecords: [{ timestamp: 1000, intensity: 4 }],
+      note: "Synthetic previous behavior note", legacyObservationText: "Synthetic legacy behavior text",
+      legacyMeasurementHistory: [9] }));
+    const previous = {
+      ...syntheticVisit(workflow, behaviors), endTime: 11_000,
+      notes: "Synthetic previous observation note", recommendations: "Synthetic previous recommendation",
+      implementationStatus: "partially", implementationNotes: "Synthetic previous implementation note",
+      ...(workflow === "fba" ? {
+        abcEntries: [{ antecedent: "Synthetic antecedent", behavior: "Synthetic event", consequence: "Synthetic consequence" }],
+        latencyRecords: [5],
+        fbaLatencyEvents: [{ behaviorId: null, behaviorLabel: "Synthetic latency target", startTime: 1000, stopTime: 6000, latencySec: 5, timestamp: 6000 }],
+        intervalLengthSec: 5,
+        intervalRecords: [true],
+        fbaIntervalSessions: [{ behaviorId: null, behaviorLabel: "Synthetic interval target", intervalLengthSec: 5,
+          startedAt: 1000, records: [{ intervalNumber: 1, behaviorPresent: true, timestamp: 6000 }] }],
+      } : {}),
+    };
     const original = json(previous);
     await p.completeVisit(previous);
+    const originalRow = json(p.rows.get(previous.id));
     await p.fetchPersistedVisits();
     assert.equal(p.state.data.visits[0].behaviors.length, 10, "Mixed library/custom selections survive saving and loading");
     p.context.data = p.state.data;
     p.context.newVisitForm = { type, subjectName: previous.subjectName, observerName: previous.observerName,
       grade: previous.grade, selectedDistrict: previous.district, schoolName: previous.schoolName };
     p.startVisit();
-    assert.equal(p.state.active.behaviors.length, workflow === "fba" ? 0 : 10);
-    for (const behavior of p.state.active.behaviors) {
+    const draft = p.state.active;
+    assert.equal(draft.notes, "");
+    assert.equal(draft.recommendations, "");
+    assert.equal(draft.implementationNotes, "");
+    assert.equal(draft.implementationStatus, workflow === "fba" ? undefined : "fully");
+    assert.equal(draft.totalDuration, undefined);
+    assert.equal(draft.endTime, undefined);
+    assert.equal(draft.behaviors.length, workflow === "fba" ? 0 : 10);
+    if (workflow === "fba") assert.equal(draft.previousFeedback, undefined);
+    else assert.deepEqual(json(draft.previousFeedback), { recommendations: previous.recommendations, observedAt: previous.endTime });
+    assert.equal("prevVisit" in draft, false);
+    for (const behavior of draft.behaviors) {
       const saved = previous.behaviors.find((item) => item.id === behavior.id);
       for (const key of ["id", "label", "category", "type", "custom", "measureType", "supportsDuration", "supportsStudentCount"]) {
         assert.equal(behavior[key], saved[key], `Preserve ${key}`);
@@ -280,14 +311,48 @@ for (const workflow of workflows) {
       assert.equal(behavior.count, 0); assert.equal(behavior.studentCount, 0);
       assert.equal(behavior.durationSec, 0); assert.equal(behavior.intensity, null);
       assert.equal(behavior.note, "");
+      assert.equal("legacyObservationText" in behavior, false);
+      assert.equal("legacyMeasurementHistory" in behavior, false);
       assert.deepEqual(json(behavior.occurrences), []); assert.deepEqual(json(behavior.intensityRecords), []);
     }
     assert.deepEqual(json(previous), original, "Original observation is unchanged");
-    assert.deepEqual(p.rows.get(previous.id).behaviors, original.behaviors, "Stored measurements remain intact");
-    const next = trackingHarness(workflow, { visit: p.state.active });
+    const next = trackingHarness(workflow, { visit: draft });
+    assert.equal(textareaValue(next.tree(), "Contextual notes..."), "");
+    assert.equal(textareaValue(next.tree(), "Interventions or recommendations..."), "");
+    assert.equal(content(next.tree()).includes(previous.recommendations), workflow !== "fba");
+    if (workflow !== "fba") {
+      assert.equal(textareaValue(next.tree(), "Optional notes on implementation..."), "");
+      assert.match(content(next.tree()), /FOLLOW-UP: Recommendations from/);
+    }
     next.section().onAddBehaviorFromLibrary(next.section().availableLib[0]); next.render();
     assert.equal(next.section().behaviors.length, workflow === "fba" ? 1 : 11,
       "Subsequent observations still permit additional behaviors");
+    const completed = next.complete();
+    if (workflow === "fba") {
+      assert.deepEqual(json(completed.abcEntries), Array.from({ length: 3 }, () => ({ antecedent: "", behavior: "", consequence: "" })));
+      for (const field of ["latencyRecords", "fbaLatencyEvents", "intervalRecords", "fbaIntervalSessions"]) {
+        assert.deepEqual(json(completed[field]), [], field);
+      }
+    }
+    await p.completeVisit(completed);
+    assert.equal(p.rows.get(completed.id).notes, "");
+    assert.equal(p.rows.get(completed.id).recommendations, "");
+    assert.equal("previousFeedback" in p.rows.get(completed.id), false);
+    assert.deepEqual(p.rows.get(previous.id), originalRow, "Saving the next observation leaves the original row intact");
+
+    await p.fetchPersistedVisits();
+    p.editVisit(p.state.data.visits.find((visit) => visit.id === previous.id));
+    const edit = trackingHarness(workflow, { visit: p.state.active, editing: true });
+    assert.equal(textareaValue(edit.tree(), "Contextual notes..."), previous.notes);
+    assert.equal(textareaValue(edit.tree(), "Interventions or recommendations..."), previous.recommendations);
+    if (workflow !== "fba") assert.equal(textareaValue(edit.tree(), "Optional notes on implementation..."), previous.implementationNotes);
+    p.context.editingVisitId = previous.id;
+    await p.completeVisit(edit.complete());
+    const reopenedRow = p.rows.get(previous.id);
+    for (const field of ["notes", "recommendations", "implementation_status", "implementation_notes", "behaviors",
+      "total_duration", "abc_entries", "latency_records", "fba_latency_events", "interval_records", "fba_interval_sessions"]) {
+      assert.deepEqual(reopenedRow[field], originalRow[field], field);
+    }
   });
 }
 
@@ -368,7 +433,7 @@ for (const workflow of ["student", "classroom", "rhs9"]) {
       p.context.data = { visits: [{ ...base, ...mismatch, behaviors: [{ id: "synthetic-custom", custom: true, label: "Synthetic" }] }] };
       p.startVisit();
       assert.equal(p.state.active.behaviors.length, 0, JSON.stringify(mismatch));
-      assert.equal(p.state.active.prevVisit, null);
+      assert.equal(p.state.active.previousFeedback, undefined);
     }
     p.context.data = { visits: [] };
     p.context.selectedFirstVisit = true; p.startVisit();
@@ -590,7 +655,7 @@ for (const workflow of workflows) {
     assert.equal(h.section().behaviors.length, 1);
   });
 
-  test(`${workflow}: setup starts with an available picker and supports the first addition`, () => {
+  test(`${workflow}: first visit starts with blank notes and supports the first behavior addition`, () => {
     const initial = trackingHarness(workflow), p = persistenceHarness(initial.api);
     const visit = syntheticVisit(workflow);
     p.context.data = { visits: [] }; p.context.selectedFirstVisit = true;
@@ -598,7 +663,10 @@ for (const workflow of workflows) {
       grade: visit.grade, selectedDistrict: visit.district, schoolName: visit.schoolName };
     p.startVisit();
     assert.equal(p.state.active.behaviors.length, 0);
+    assert.equal(p.state.active.previousFeedback, undefined);
     const h = trackingHarness(workflow, { visit: p.state.active });
+    assert.equal(textareaValue(h.tree(), "Contextual notes..."), "");
+    assert.equal(textareaValue(h.tree(), "Interventions or recommendations..."), "");
     const add = nodes(h.shared()).find((node) => node.type === "button" && content(node).includes("Add Behavior"));
     assert(add && !add.props.disabled); add.props.onClick(); h.render();
     h.section().onAddBehaviorFromLibrary(h.section().availableLib[0]); h.render();
