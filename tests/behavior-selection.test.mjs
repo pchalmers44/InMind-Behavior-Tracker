@@ -360,6 +360,55 @@ const browser = [
   path.join(process.env.ProgramFiles || "C:/Program Files", "Google/Chrome/Application/chrome.exe"),
   path.join(process.env["ProgramFiles(x86)"] || "C:/Program Files (x86)", "Microsoft/Edge/Application/msedge.exe"),
 ].find((file) => fs.existsSync(file));
+function runBehaviorBrowser(width, height, document) {
+  const directory = fs.mkdtempSync(path.join(tmpdir(), "inmind-behavior-browser-"));
+  try {
+    const fixture = path.join(directory, "synthetic.html");
+    // A fixed-size child viewport avoids platform window-frame/minimum-size differences.
+    const escaped = document.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+    fs.writeFileSync(fixture, `<!doctype html><body style="margin:0"><iframe style="border:0;width:${width}px;height:${height}px" srcdoc="${escaped}"></iframe></body>`);
+    return execFileSync(browser, ["--headless", "--disable-gpu", "--in-process-gpu", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
+      "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions",
+      `--user-data-dir=${path.join(directory, "profile")}`, `--window-size=${Math.max(width + 100, 1280)},${height + 200}`, "--dump-dom", pathToFileURL(fixture).href],
+    { encoding: "utf8", timeout: 30_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  } finally {
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(tmpdir()).toLowerCase());
+    assert(path.basename(resolved).startsWith("inmind-behavior-browser-"));
+    fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+test("browser: recording near the bottom of the viewport keeps Record (+1) in view when intensity opens", { skip: !browser }, () => {
+  const h = trackingHarness("student");
+  const behavior = h.section().availableLib.find((item) => item.category === "challenging" && item.type === "frequency");
+  h.section().onAddBehaviorFromLibrary(behavior); h.render();
+  const before = h.html();
+  h.section().onRecordFrequency(behavior.id); h.render();
+  const after = h.html();
+  const output = runBehaviorBrowser(390, 640, `<!doctype html>
+    <html style="overflow-anchor:none"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <body style="margin:0;padding:16px"><div id="spacer"></div><main id="tracker">${before}</main>
+    <template id="pending">${after}</template><script>
+      const tracker = document.querySelector('#tracker');
+      const record = () => [...tracker.querySelectorAll('button')].find(button => button.textContent === 'Record (+1)');
+      document.querySelector('#spacer').style.height = (innerHeight - record().getBoundingClientRect().bottom - 45) + 'px';
+      const before = record().getBoundingClientRect();
+      tracker.replaceChildren(document.querySelector('#pending').content.cloneNode(true));
+      const after = record().getBoundingClientRect();
+      const report = window.parent.document.body;
+      report.dataset.recordBeforeVisible = before.top >= 0 && before.bottom <= innerHeight;
+      report.dataset.recordAfterVisible = after.top >= 0 && after.bottom <= innerHeight;
+      report.dataset.recordShift = Math.round(after.top - before.top);
+      report.dataset.recordPending = record().disabled && Boolean(tracker.querySelector('[aria-label="Intensity rating"]'));
+    </script></body></html>`);
+  assert(/data-record-before-visible="true"/.test(output), "The button must start inside the viewport");
+  assert(/data-record-pending="true"/.test(output), "The rating must open with recording temporarily disabled");
+  const shift = output.match(/data-record-shift="(-?\d+)"/)?.[1];
+  assert(/data-record-after-visible="true"/.test(output), `Rating moved Record (+1) by ${shift}px and out of the viewport`);
+  assert.equal(shift, "0", "Opening the rating must leave the recorded behavior's control in place");
+});
+
 for (const [width, height] of [[390, 844], [1280, 900]]) {
   test(`browser ${width}px: pending intensity permits pointer access to Add, library, and custom controls`, { skip: !browser }, () => {
     const h = trackingHarness("student");
@@ -367,10 +416,7 @@ for (const [width, height] of [[390, 844], [1280, 900]]) {
     h.section().onRecordFrequency(h.section().behaviors[0].id); h.render();
     h.section().onToggleAddBehavior(); h.render();
     h.section().setCustomBehavior({ label: "Synthetic custom", type: "frequency", behaviorType: "positive" }); h.render();
-    const directory = fs.mkdtempSync(path.join(tmpdir(), "inmind-behavior-browser-"));
-    try {
-      const fixture = path.join(directory, "synthetic.html");
-      const document = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;box-sizing:border-box">${h.html()}<script>
+    const output = runBehaviorBrowser(width, height, `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:16px;box-sizing:border-box">${h.html()}<script>
         const controls = [document.querySelector('button[aria-controls="behavior-picker"]'),
           document.querySelector('#behavior-picker button'),
           [...document.querySelectorAll('#behavior-picker button')].at(-1),
@@ -388,24 +434,10 @@ for (const [width, height] of [[390, 844], [1280, 900]]) {
           return box.width > window.innerWidth || box.right > window.innerWidth || element.scrollWidth > element.clientWidth;
         });
         report.dataset.viewport = window.innerWidth;
-      </script></body></html>`;
-      // A fixed-size child viewport avoids platform window-frame/minimum-size differences.
-      const escaped = document.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
-      fs.writeFileSync(fixture, `<!doctype html><body style="margin:0"><iframe style="border:0;width:${width}px;height:${height}px" srcdoc="${escaped}"></iframe></body>`);
-      // Trusted local synthetic markup in a disposable profile, inside the runner's sandbox.
-      const output = execFileSync(browser, ["--headless", "--disable-gpu", "--in-process-gpu", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
-        "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions",
-        `--user-data-dir=${path.join(directory, "profile")}`, `--window-size=${Math.max(width + 100, 1280)},${height + 200}`, "--dump-dom", pathToFileURL(fixture).href],
-      { encoding: "utf8", timeout: 30_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-      assert.equal(output.match(/data-behavior-hits="([^"]*)"/)?.[1], "true,true,true,true", "Rendered controls must receive pointer hits while intensity is pending");
-      assert.equal(output.match(/data-overflow="([^"]*)"/)?.[1], "false", "Picker and intensity prompt must fit the viewport");
-      assert.equal(Number(output.match(/data-viewport="([^"]*)"/)?.[1]), width, "Check the actual viewport width");
-    } finally {
-      const resolved = fs.realpathSync(directory);
-      assert.equal(path.dirname(resolved).toLowerCase(), fs.realpathSync(tmpdir()).toLowerCase());
-      assert(path.basename(resolved).startsWith("inmind-behavior-browser-"));
-      fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
+      </script></body></html>`);
+    assert.equal(output.match(/data-behavior-hits="([^"]*)"/)?.[1], "true,true,true,true", "Rendered controls must receive pointer hits while intensity is pending");
+    assert.equal(output.match(/data-overflow="([^"]*)"/)?.[1], "false", "Picker and intensity prompt must fit the viewport");
+    assert.equal(Number(output.match(/data-viewport="([^"]*)"/)?.[1]), width, "Check the actual viewport width");
   });
 }
 
@@ -630,6 +662,12 @@ for (const workflow of workflows) {
       }
       h.render();
       assert(h.section().pendingIntensity);
+      const cardNodes = (behaviorId) => nodes(nodes(h.shared()).find((node) => node.key === behaviorId));
+      const record = (behaviorId) => cardNodes(behaviorId).find((node) =>
+        node.type === "button" && content(node) === "Record (+1)");
+      assert(cardNodes(id).some((node) => node.props["aria-label"] === "Intensity rating"));
+      if (trigger === "frequency") assert.equal(record(id).props.disabled, true);
+      else assert.equal(record(id), undefined);
       assert(!nodes(h.shared()).some((node) => node.props?.style?.position === "fixed" &&
         node.props.style.inset === 0 && node.props.style.pointerEvents !== "none"),
       "A viewport-covering intensity backdrop intercepts Add Behavior clicks");
@@ -642,10 +680,14 @@ for (const workflow of workflows) {
       assert.equal(h.section().behaviors.length, 3);
       assert.deepEqual(json(h.section().pendingIntensity), prompt);
       assert.equal(h.section().showAddBehavior, true);
+      assert.equal(record(h.section().behaviors[2].id).props.disabled, false);
       h.section().onChooseIntensity(3); h.render();
       assert.equal(h.section().pendingIntensity, null);
       assert.equal(h.section().behaviors[0].occurrences[0].intensity, 3);
-      if (trigger === "frequency") assert.equal(h.section().behaviors[0].count, 1);
+      if (trigger === "frequency") {
+        assert.equal(h.section().behaviors[0].count, 1);
+        assert.equal(record(id).props.disabled, false);
+      }
       else assert.equal(h.section().durationTimers[id], 2);
     });
   }

@@ -735,62 +735,6 @@ function BehaviorSetupSection({
           </div>
         </div>
       )}
-      {pendingIntensity && (
-        <div
-          role="group"
-          aria-label="Intensity rating"
-          style={{
-            marginBottom: 12,
-          }}
-        >
-          <div
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              background: "#0f172a",
-              border: "1px solid #334155",
-              borderRadius: 16,
-              padding: 20,
-              boxShadow: "0 20px 60px rgba(15, 23, 42, 0.55)",
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.08em" }}>
-              INTENSITY RATING
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 900, color: "#f1f5f9", marginTop: 6 }}>
-              {pendingIntensity.behaviorLabel}
-            </div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
-              Rate this {pendingIntensity.occurrenceType === "frequency" ? "occurrence" : "duration segment"}.
-              {pendingIntensity.durationSec != null ? ` Duration: ${fmtDuration(pendingIntensity.durationSec)}` : ""}
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <IntensityPicker value={null} onChange={onChooseIntensity} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-              <button
-                onClick={onSkipIntensity}
-                style={{
-                  background: "transparent",
-                  border: "1px solid #334155",
-                  color: "#cbd5e1",
-                  borderRadius: 10,
-                  padding: "8px 14px",
-                  fontSize: 13,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-              >
-                Skip
-              </button>
-              <div style={{ fontSize: 12, color: "#64748b", alignSelf: "center" }}>
-                Optional for challenging behaviors.
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {behaviors.length === 0 && (
         <div
           style={{
@@ -1194,6 +1138,62 @@ function BehaviorSetupSection({
                     <div style={{ fontSize: 11, color: "#64748b" }}>of visit</div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {pendingIntensity?.behaviorId === b.id && (
+              <div
+                role="group"
+                aria-label="Intensity rating"
+                style={{
+                  marginBottom: 12,
+                }}
+              >
+                <div
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    background: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: 16,
+                    padding: 20,
+                    boxShadow: "0 20px 60px rgba(15, 23, 42, 0.55)",
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: "0.08em" }}>
+                    INTENSITY RATING
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: "#f1f5f9", marginTop: 6 }}>
+                    {pendingIntensity.behaviorLabel}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+                    Rate this {pendingIntensity.occurrenceType === "frequency" ? "occurrence" : "duration segment"}.
+                    {pendingIntensity.durationSec != null ? ` Duration: ${fmtDuration(pendingIntensity.durationSec)}` : ""}
+                  </div>
+                  <div style={{ marginTop: 16 }}>
+                    <IntensityPicker value={null} onChange={onChooseIntensity} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+                    <button
+                      onClick={onSkipIntensity}
+                      style={{
+                        background: "transparent",
+                        border: "1px solid #334155",
+                        color: "#cbd5e1",
+                        borderRadius: 10,
+                        padding: "8px 14px",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Skip
+                    </button>
+                    <div style={{ fontSize: 12, color: "#64748b", alignSelf: "center" }}>
+                      Optional for challenging behaviors.
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
